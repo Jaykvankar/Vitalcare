@@ -183,9 +183,11 @@ Single people can be added under **People**; care teams can be changed under **C
   Units: heart rate and breathing rate per minute, SpO₂ in %, blood pressure in mmHg, temperature in °C.
   `scripts/sensor_example.py` is a working template that prints simulated values in exactly this format.
 
-**All six values are required in every line today.** Most patients will have several sensors, so the
-adapter combines them: it sends the latest oximeter values each time and repeats the most recent blood
-pressure and temperature until a new measurement arrives (the same approach used for the eICU data).
+**A line may contain any subset of the six values**, for example `{"spo2": 96, "hr": 81}` from an oximeter
+alone. Rules: at least one value, blood pressure as a pair (`sbp` and `dbp` together), no unknown fields, and
+values in a plausible range; anything else is rejected with 422. Never repeat or invent old values to fill
+gaps: missing vitals show as *Not measured*, the clinical rules and NEWS2 use what was sent, and the AI model
+scores only lines that contain all six (its score is shown as "Needs all six vitals" otherwise).
 
 The in-app **Device guide** (sidebar) explains all of this for non-technical staff and patients: which
 device types work, a "will my device work?" checklist, what each device status means, and troubleshooting.

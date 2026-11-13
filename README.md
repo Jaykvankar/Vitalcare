@@ -22,6 +22,7 @@ Clinicians see a risk-sorted worklist, charts and alerts. Patients see their own
 | Set it up at a hospital and connect real devices | [docs/HANDOFF.md](docs/HANDOFF.md) |
 | Use it day to day | [docs/user_guide.md](docs/user_guide.md) |
 | Answer viva questions | [docs/viva_defense.md](docs/viva_defense.md) |
+| Present it (click-by-click script, slides) | [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md), [docs/presentation.html](docs/presentation.html) |
 
 ## Run the demo (Windows, from the project folder)
 
@@ -45,7 +46,7 @@ Then one command does the rest:
 ```
 
 * With the real datasets downloaded (below), two demo patients replay **real eICU ICU stays from two different hospitals**, one replays a MIMIC-III stay, and one is synthetic, so you can inject a deterioration from Admin → **Data sources**.
-* Accounts and passwords are in `seed_credentials.txt`. Staff also need a 6-digit code:
+* Accounts and passwords are in `seed_credentials.txt`. Staff also need a 6-digit code. In demo mode the sign-in screen shows it after the password step (**Use this code**), for the seeded accounts only. Outside the demo, or from a terminal:
 
 ```bash
 .venv\Scripts\python scripts\totp_code.py dr.mehta
@@ -56,7 +57,7 @@ Then one command does the rest:
 
 Five-minute walkthrough:
 1. **dr.mehta:** the worklist is ranked by urgency. Open the top patient to see the AI explanation, trends and alerts, then acknowledge an alert.
-2. **admin:** switch a monitor to another real ICU stay under **Data sources**, onboard staff under **Bulk import**, and check the **Privacy ledger**.
+2. **admin:** open **Security inspector** to see the cryptography applied to the latest real packet and run the replay / tamper / forged-key attacks (all blocked); switch a monitor to another real ICU stay under **Data sources**, onboard staff under **Bulk import**, and check the **Privacy ledger**.
 3. **p.iyer:** sees only her own data, can pause sharing and can download her data.
 
 Running pieces by hand instead: `scripts/init_env.py`, `scripts/gen_dev_cert.py`, `python -m app.seed` (in `backend/`), `npm run build` (in `frontend/`), then `run_server.py` (HTTPS) or `run_server.py --http`.
@@ -218,6 +219,7 @@ Known limits:
 
 ## AI risk engine
 
+- **Partial readings:** a device may send any subset of the six vitals (blood pressure as a pair). Missing ones show as *Not measured*; rules and NEWS2 use what is present, and the model scores only complete readings.
 - **Rules:** clinical thresholds (SpO₂ < 92, HR > 120 or < 45, SBP < 90 or > 180, T ≥ 38.5 °C, RR > 24 …) and **NEWS2** always win.
 - **Model:** `HistGradientBoostingClassifier` on 18 features: vitals, deltas, and z-scores against the patient's own encrypted rolling baseline. The model can raise the band, never lower it.
 - **Results** (see [docs/model_report.md](docs/model_report.md); synthetic data, test patients separate from training patients):

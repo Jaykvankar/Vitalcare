@@ -12,12 +12,14 @@
 - **Care teams:** link clinicians to patients. Only linked clinicians can see a patient.
 - **Devices & pairing:** connect a device for any patient (choose the type, name it, scan the QR code on the gateway); revoke lost devices. **Device guide** explains supported devices and troubleshooting.
 - **Data sources:** demo only. Start simulated monitors, choose synthetic or real recorded data, and inject episodes.
+- **Security inspector:** the cryptography applied to the latest packet from any device, step by step, and buttons that try replay, tampering and a forged key against it (all should show *Blocked*).
 - **Privacy ledger:** see every access; *Verify integrity* checks the hash chain and signatures.
 - **Keys & algorithms:** key versions and fingerprints. Rotate with `python scripts/rotate_master_key.py`.
 
 ## Clinician
 - **Worklist:** patients sorted by urgency. A red banner means a critical alert has waited more than 15 minutes (escalated).
-- **Patient record:** live vitals, trends (6 h raw, 24 h / 7 d summarised), the AI early-warning panel with reasons, and alerts. *Acknowledge* with an optional note (stored encrypted).
+- **Patient record:** live vitals, trends (6 h raw, 24 h / 7 d summarised), the AI early-warning panel with reasons, and alerts. *Acknowledge* with an optional note (stored encrypted). A vital shown as *Not measured* was not sent by the patient's devices; the AI score then reads "Needs all six vitals" while the rules and NEWS2 still run.
+- **Security inspector:** the same step-by-step view for your own patients' devices (read only).
 - **Connect device** (patient record → Devices): choose what you are connecting, name it, then scan the QR code or type the code on the gateway. The window confirms when readings arrive, and each device shows its status (Receiving readings, No recent readings, …). See **Device guide** in the sidebar. **Import past readings:** upload a CSV from another system (`timestamp,hr,spo2,sbp,dbp,temp,rr`).
 - **Account:** change your password, or create new recovery codes.
 - Lost your phone? On the sign-in code screen choose *Use a recovery code*.

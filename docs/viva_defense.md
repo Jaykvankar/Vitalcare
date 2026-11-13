@@ -36,4 +36,8 @@ Each item below is a taught algorithm used in a standard way, not a new algorith
 | 24 h / 7 d charts | 5-minute rollups encrypted with **AES-256-GCM** under the patient key (AAD = patient + bucket) |
 | Bulk import | Uploaded file fingerprinted with **SHA-512** and recorded in the ledger |
 | Audit chain safety | `UNIQUE(prev_hash)` in the database: the **SHA-512** chain cannot fork even with several server processes |
+| Security inspector | Shows, for the latest real packet, the public DH value, the AES-GCM nonce and tag, the **SHA-512** digest and the **RSA-PSS** verification result, plus the ledger head and its **ECDSA** checkpoint. Only public or encrypted values; never vitals or keys |
+| Live attack demo | Replay, one-bit tamper and forged-key packets go through the same ingest checks: rejected by the sequence check (409) and by the **RSA** signature over the **SHA-512** digest (401). Admin only; every attempt is in the ledger |
+| Partial readings | No new crypto: a subset of vitals is sealed exactly like a full reading. Only the AI changes (the model is skipped unless all six are present) |
+| Demo sign-in code | Demo mode only, seeded accounts only, and only after the correct password: the server computes the current **TOTP (HMAC-SHA-512)** code and shows it. The check itself is unchanged, and each display is logged |
 | TOTP replay guard | Last used time-step stored in the DB, so a code cannot be reused after a restart or on another process |

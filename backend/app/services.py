@@ -44,10 +44,19 @@ def register_device(db: Session, *, patient_id: int, label: str, public_key_pem:
     return device
 
 
-def provision_simulated_device(db: Session, patient_id: int, label: str) -> Device:
-    """The simulator generates the key pair; the server stores only the public key."""
-    from .simulator import runner
+def provision_simulated_device(db: Session, patient_id: int, label: str, *, created_by: int,
+                               source: str = "synthetic") -> Device:
+    """Pair a simulated device in-process using the same one-time-code protocol a real device uses.
 
-    device_id = f"dev-{secrets.token_hex(6)}"
-    public_pem = runner.keystore.create_device(device_id, patient_id)
-    return register_device(db, patient_id=patient_id, label=label, public_key_pem=public_pem, device_id=device_id)
+    The simulator generates the key pair; the server stores only the public key.
+    """
+    from .security import pairing
+    from .security.hashing import b64d
+    from .simulator import pairing_request, runner
+
+    pc, code = pairing.create(db, patient_id=patient_id, label=label, created_by=created_by)
+    private_pem, body = pairing_request(pc.id, code)
+    device = pairing.complete(db, pairing_id=pc.id, public_key_pem=body["public_key_pem"],
+                              proof_bytes=b64d(body["proof"]))
+    runner.keystore.add(device.id, patient_id, private_pem, source)
+    return device

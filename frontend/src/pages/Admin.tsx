@@ -1,13 +1,29 @@
 import { FormEvent, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { api, ApiError } from "../api";
+import { api, ApiError, sourceInfo } from "../api";
 import { usePolling } from "../hooks";
+import { Icon, initials } from "../components/Icons";
+import { DevicesCard, SourceChip } from "../components/Monitor";
 
 interface UserRow { id: number; username: string; full_name: string; role: string; active: boolean; mfa_enrolled: boolean; patient_id: number | null }
-interface PatientRow { id: number; name: string; username: string; consent_active: boolean; key_version: number; devices: { id: string; label: string }[]; simulating: boolean; simulator_status: string | null }
+interface PatientRow { id: number; name: string; username: string; consent_active: boolean; key_version: number; devices: { id: string; label: string }[]; simulating: boolean; simulator_status: string | null; source: string | null }
 interface AssignmentRow { id: number; clinician_id: number; clinician: string; patient_id: number; patient: string }
 interface AuditRow { id: number; ts: string; actor: string; action: string; target: string; detail: string; hash: string }
 interface VerifyResult { ok: boolean; rows: number; checkpoints: number; anchored_through_row: number; unanchored_rows: number; problems: string[] }
+interface Source { id: string; label: string; detail: string }
+
+function Head({ eyebrow, title, sub, children }: { eyebrow: string; title: string; sub: string; children?: React.ReactNode }) {
+  return (
+    <div className="page-head">
+      <div>
+        <div className="eyebrow">{eyebrow}</div>
+        <h1>{title}</h1>
+        <p className="sub">{sub}</p>
+      </div>
+      {children && <div className="row">{children}</div>}
+    </div>
+  );
+}
 
 export default function Admin() {
   return (
@@ -15,6 +31,7 @@ export default function Admin() {
       <Routes>
         <Route path="users" element={<Users />} />
         <Route path="assignments" element={<Assignments />} />
+        <Route path="devices" element={<Devices />} />
         <Route path="simulator" element={<Simulator />} />
         <Route path="audit" element={<Audit />} />
         <Route path="security" element={<Security />} />
@@ -23,6 +40,8 @@ export default function Admin() {
     </div>
   );
 }
+
+/* ---------------------------------------------------------------- people */
 
 function Users() {
   const { data, reload } = usePolling<UserRow[]>("/api/admin/users", 15000);
@@ -36,7 +55,7 @@ function Users() {
     try {
       const body = { ...f, dob: f.dob || null, phone: f.phone || null, address: f.address || null };
       await api("/api/admin/users", { method: "POST", body });
-      setMsg({ ok: true, text: `Created ${f.username}.${f.role !== "patient" ? " They will enrol TOTP at first sign-in." : " A simulated device was registered."}` });
+      setMsg({ ok: true, text: `${f.full_name} was added.${f.role !== "patient" ? " They will set up two-step sign-in the first time they log in." : " A simulated monitor was paired for them."}` });
       setF(empty);
       reload();
     } catch (err) {
@@ -50,66 +69,56 @@ function Users() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Users</h1>
-          <p className="muted">Admins manage accounts. They cannot see vitals or patient personal details.</p>
-        </div>
-      </div>
-      <div className="grid-2 wide-left">
-        <div className="panel">
+      <Head eyebrow="Administration" title="People" sub="Create and manage accounts. Administrators cannot see vital signs or personal health details." />
+      <div className="grid side-main">
+        <div className="card scroll-x">
           <table className="table">
-            <thead>
-              <tr><th>Name</th><th>Username</th><th>Role</th><th>MFA</th><th>Status</th><th /></tr>
-            </thead>
+            <thead><tr><th>Name</th><th>Role</th><th>Two-step</th><th>Status</th><th /></tr></thead>
             <tbody>
               {data?.map((u) => (
                 <tr key={u.id}>
-                  <td><b>{u.full_name}</b></td>
-                  <td className="mono">{u.username}</td>
-                  <td><span className="role">{u.role}</span></td>
-                  <td>{u.role === "patient" ? <span className="muted">n/a</span> : u.mfa_enrolled ? "enrolled" : <span className="warn-text">pending</span>}</td>
-                  <td>{u.active ? "active" : <span className="crit-text">disabled</span>}</td>
+                  <td><div className="person"><span className="avatar">{initials(u.full_name)}</span><div><b>{u.full_name}</b><span className="mono">{u.username}</span></div></div></td>
+                  <td><span className="tag">{u.role}</span></td>
+                  <td>{u.role === "patient" ? <span className="faint">Not required</span> : u.mfa_enrolled ? <span className="tag ok">Enrolled</span> : <span className="tag">Pending</span>}</td>
+                  <td>{u.active ? "Active" : <span className="tag danger">Disabled</span>}</td>
                   <td className="actions">
-                    {u.role !== "patient" && u.mfa_enrolled && <button className="ghost small" onClick={() => act(`/api/admin/users/${u.id}/reset-mfa`)}>Reset MFA</button>}
-                    {u.role !== "admin" && (
-                      <button className="ghost small" onClick={() => act(`/api/admin/users/${u.id}/active`, { active: !u.active })}>
-                        {u.active ? "Disable" : "Enable"}
-                      </button>
-                    )}
+                    {u.role !== "patient" && u.mfa_enrolled && <button className="btn ghost sm" onClick={() => act(`/api/admin/users/${u.id}/reset-mfa`)}>Reset two-step</button>}
+                    {u.role !== "admin" && <button className="btn ghost sm" onClick={() => act(`/api/admin/users/${u.id}/active`, { active: !u.active })}>{u.active ? "Disable" : "Enable"}</button>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <form className="panel pad form" onSubmit={create}>
-          <h2>New user</h2>
-          <label>Full name<input value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} required /></label>
-          <label>Username<input value={f.username} pattern="[a-zA-Z0-9_.\-]{3,64}" onChange={(e) => setF({ ...f, username: e.target.value })} required /></label>
-          <label>Role
+        <form className="card pad form" onSubmit={create}>
+          <h2>Add a person</h2>
+          <label className="field">Full name<input value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} required /></label>
+          <label className="field">Username<input value={f.username} pattern="[a-zA-Z0-9_.\-]{3,64}" onChange={(e) => setF({ ...f, username: e.target.value })} required /></label>
+          <label className="field">Role
             <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
               <option value="patient">Patient</option>
               <option value="clinician">Clinician</option>
-              <option value="admin">Admin</option>
+              <option value="admin">Administrator</option>
             </select>
           </label>
-          <label>Initial password (min 12)<input type="password" minLength={12} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required /></label>
+          <label className="field">Initial password <span className="hint">At least 12 characters</span><input type="password" minLength={12} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required /></label>
           {f.role === "patient" && (
             <>
-              <label>Date of birth<input type="date" value={f.dob} onChange={(e) => setF({ ...f, dob: e.target.value })} /></label>
-              <label>Phone<input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
-              <label>Address<input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></label>
-              <p className="muted small">Personal details are encrypted with the patient's own AES-256 key.</p>
+              <label className="field">Date of birth<input type="date" value={f.dob} onChange={(e) => setF({ ...f, dob: e.target.value })} /></label>
+              <label className="field">Phone<input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></label>
+              <label className="field">Address<input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} /></label>
+              <p className="muted xs">Personal details are encrypted with the patient's own AES-256 key.</p>
             </>
           )}
-          {msg && <div className={msg.ok ? "success" : "error"}>{msg.text}</div>}
-          <button className="primary">Create user</button>
+          {msg && <div className={`notice ${msg.ok ? "success" : "error"}`}>{msg.text}</div>}
+          <button className="btn primary">Add person</button>
         </form>
       </div>
     </>
   );
 }
+
+/* ---------------------------------------------------------------- care teams */
 
 function Assignments() {
   const { data: rows, reload } = usePolling<AssignmentRow[]>("/api/admin/assignments", 15000);
@@ -137,34 +146,34 @@ function Assignments() {
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Care-team assignments</h1>
-          <p className="muted">A clinician can decrypt a patient's data only while assigned.</p>
+      <Head eyebrow="Administration" title="Care teams" sub="A clinician can decrypt a patient's data, pair devices and acknowledge alerts only while assigned." />
+      <form className="card pad" onSubmit={add}>
+        <div className="row" style={{ alignItems: "flex-end" }}>
+          <label className="field" style={{ flex: "1 1 220px" }}>Clinician
+            <select value={c} onChange={(e) => setC(e.target.value)} required>
+              <option value="">Select a clinician</option>
+              {clinicians.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </select>
+          </label>
+          <label className="field" style={{ flex: "1 1 220px" }}>Patient
+            <select value={p} onChange={(e) => setP(e.target.value)} required>
+              <option value="">Select a patient</option>
+              {patients?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </label>
+          <button className="btn primary"><Icon.Plus size={16} /> Assign</button>
         </div>
-      </div>
-      <form className="panel pad inline-form" onSubmit={add}>
-        <select value={c} onChange={(e) => setC(e.target.value)} required>
-          <option value="">Clinician…</option>
-          {clinicians.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-        </select>
-        <span className="muted">cares for</span>
-        <select value={p} onChange={(e) => setP(e.target.value)} required>
-          <option value="">Patient…</option>
-          {patients?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-        </select>
-        <button className="primary">Assign</button>
-        {err && <span className="error">{err}</span>}
+        {err && <div className="notice error" style={{ marginTop: 12 }}>{err}</div>}
       </form>
-      <div className="panel">
+      <div className="card scroll-x">
         <table className="table">
           <thead><tr><th>Clinician</th><th>Patient</th><th /></tr></thead>
           <tbody>
             {rows?.map((a) => (
               <tr key={a.id}>
-                <td>{a.clinician}</td>
-                <td>{a.patient}</td>
-                <td className="actions"><button className="ghost small" onClick={() => remove(a.id)}>Remove</button></td>
+                <td><div className="person"><span className="avatar">{initials(a.clinician)}</span><b>{a.clinician}</b></div></td>
+                <td><div className="person"><span className="avatar">{initials(a.patient)}</span><b>{a.patient}</b></div></td>
+                <td className="actions"><button className="btn ghost sm" onClick={() => remove(a.id)}>Remove</button></td>
               </tr>
             ))}
           </tbody>
@@ -173,70 +182,128 @@ function Assignments() {
     </>
   );
 }
+
+/* ---------------------------------------------------------------- devices */
+
+function Devices() {
+  const { data: patients } = usePolling<PatientRow[]>("/api/admin/patients", 30000);
+  const [pid, setPid] = useState<number | null>(null);
+  const selected = patients?.find((p) => p.id === pid) ?? patients?.[0];
+  return (
+    <>
+      <Head eyebrow="Administration" title="Devices & pairing" sub="Pair a monitor to a patient with a one-time code. The device keeps its private key; the server stores only the public key." />
+      <div className="grid side-main">
+        <div className="card scroll-x">
+          <table className="table">
+            <thead><tr><th>Patient</th><th className="num">Active devices</th><th>Data</th></tr></thead>
+            <tbody>
+              {patients?.map((p) => (
+                <tr key={p.id} className="clickable" onClick={() => setPid(p.id)} style={selected?.id === p.id ? { background: "var(--surface-2)" } : undefined}>
+                  <td><div className="person"><span className="avatar">{initials(p.name)}</span><div><b>{p.name}</b><span className="mono">{p.username}</span></div></div></td>
+                  <td className="num">{p.devices.length}</td>
+                  <td><SourceChip source={p.source ?? undefined} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {selected && <DevicesCard key={selected.id} patientId={selected.id} patientName={selected.name} canManage />}
+      </div>
+      <div className="card pad">
+        <h2>How pairing works</h2>
+        <ol className="steps" style={{ marginTop: 10 }}>
+          <li>An administrator, or a clinician on the patient's care team, creates a one-time code (valid 10 minutes).</li>
+          <li>The code is entered on the device. The device generates its own RSA-3072 key pair and sends its public key with an HMAC-SHA-512 proof of the code; the code itself never crosses the network.</li>
+          <li>Five wrong proofs burn the code. A used code cannot be reused. Revoked devices are rejected at ingest immediately.</li>
+        </ol>
+        <p className="muted small" style={{ marginTop: 10 }}>Command-line device: <code>python scripts/device_client.py pair --pairing-id ID --code CODE</code>, then <code>stream</code>.</p>
+      </div>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------- data sources / simulator */
 
 const EPISODES = ["hypoxia", "tachycardia", "hypotension", "fever", "activity"];
 
 function Simulator() {
   const { data, reload } = usePolling<PatientRow[]>("/api/admin/patients", 4000);
-  const [flash, setFlash] = useState("");
-  const toggle = async (p: PatientRow) => {
-    await api("/api/admin/simulator", { method: "POST", body: { patient_id: p.id, enabled: !p.simulating } });
-    reload();
+  const { data: src } = usePolling<{ available: { mimic: boolean; bidmc: boolean }; sources: Source[] }>("/api/admin/simulator/sources", 60000);
+  const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const call = async (path: string, body: unknown, ok: string) => {
+    try {
+      await api(path, { method: "POST", body });
+      setFlash({ ok: true, text: ok });
+      reload();
+    } catch (e) {
+      setFlash({ ok: false, text: (e as ApiError).message });
+    }
   };
   const all = async (on: boolean) => {
-    for (const p of data ?? []) if (p.consent_active) await api("/api/admin/simulator", { method: "POST", body: { patient_id: p.id, enabled: on } });
+    for (const p of data ?? []) if (p.consent_active && p.devices.length) await api("/api/admin/simulator", { method: "POST", body: { patient_id: p.id, enabled: on } });
     reload();
-  };
-  const episode = async (p: PatientRow, kind: string) => {
-    await api("/api/admin/simulator/episode", { method: "POST", body: { patient_id: p.id, kind } });
-    setFlash(`Started ${kind} episode for ${p.name}. It develops over the next minutes.`);
   };
 
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Device simulator</h1>
-          <p className="muted">
-            Each simulated wearable seals its readings with Diffie-Hellman + AES-256-GCM, signs them with its own RSA-3072 key and posts them
-            to the real HTTPS ingest API every 5 seconds.
-          </p>
+      <Head eyebrow="Administration" title="Data sources" sub="Simulated monitors post sealed, signed readings to the real ingest API every 5 seconds. Each can play synthetic data or replay a real, de-identified ICU recording.">
+        <button className="btn secondary" onClick={() => all(true)}><Icon.Play size={16} /> Start all</button>
+        <button className="btn ghost" onClick={() => all(false)}>Stop all</button>
+      </Head>
+      <div className="grid two">
+        <div className="card pad">
+          <div className="row"><Icon.Database size={18} /><h2>MIMIC-III Clinical Demo</h2><span className="spacer" />{src?.available.mimic ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>
+          <p className="muted small" style={{ marginTop: 8 }}>100 real ICU patients (PhysioNet, ODbL). Hourly charted heart rate, SpO₂, respiration, blood pressure and temperature. Replayed one hour per tick.</p>
         </div>
-        <div className="summary">
-          <button className="secondary" onClick={() => all(true)}>Start all</button>
-          <button className="ghost" onClick={() => all(false)}>Stop all</button>
+        <div className="card pad">
+          <div className="row"><Icon.Database size={18} /><h2>BIDMC PPG & Respiration</h2><span className="spacer" />{src?.available.bidmc ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>
+          <p className="muted small" style={{ marginTop: 8 }}>53 real ICU recordings at 1 Hz (PhysioNet, ODC-BY). Heart rate, SpO₂ and respiration only; blood pressure and temperature are held fixed.</p>
         </div>
       </div>
-      {flash && <div className="success banner">{flash}</div>}
-      <div className="panel">
+      {flash && <div className={`notice ${flash.ok ? "success" : "error"}`}>{flash.text}</div>}
+      <div className="card scroll-x">
         <table className="table">
-          <thead><tr><th>Patient</th><th>Devices</th><th>Streaming</th><th>Last result</th><th>Inject episode</th></tr></thead>
+          <thead><tr><th>Patient</th><th>Data source</th><th>Streaming</th><th>Last upload</th><th>Inject episode</th></tr></thead>
           <tbody>
-            {data?.map((p) => (
-              <tr key={p.id}>
-                <td><b>{p.name}</b>{!p.consent_active && <span className="tag">consent revoked</span>}</td>
-                <td className="mono small">{p.devices.map((d) => d.id).join(", ") || "–"}</td>
-                <td>
-                  <label className="switch">
-                    <input type="checkbox" checked={p.simulating} onChange={() => toggle(p)} disabled={!p.devices.length} />
-                    <span>{p.simulating ? "on" : "off"}</span>
-                  </label>
-                </td>
-                <td className="small">{p.simulator_status ?? <span className="muted">–</span>}</td>
-                <td>
-                  <select defaultValue="" onChange={(e) => { if (e.target.value) { episode(p, e.target.value); e.target.value = ""; } }} disabled={!p.simulating}>
-                    <option value="">Choose…</option>
-                    {EPISODES.map((k) => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                </td>
-              </tr>
-            ))}
+            {data?.map((p) => {
+              const s = sourceInfo(p.source ?? undefined);
+              return (
+                <tr key={p.id}>
+                  <td><div className="person"><span className="avatar">{initials(p.name)}</span><div><b>{p.name}</b><span>{p.consent_active ? `${p.devices.length} device(s)` : "sharing paused"}</span></div></div></td>
+                  <td style={{ minWidth: 240 }}>
+                    <select value={p.source ?? "synthetic"} disabled={!p.devices.length}
+                      onChange={(e) => call("/api/admin/simulator/source", { patient_id: p.id, source: e.target.value }, `${p.name} now uses ${e.target.selectedOptions[0].text}.`)}>
+                      {(src?.sources ?? [{ id: "synthetic", label: "Synthetic generator", detail: "" }]).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                    <div className="muted xs" style={{ marginTop: 4 }}>{s.detail}</div>
+                  </td>
+                  <td>
+                    <label className="switch">
+                      <input type="checkbox" checked={p.simulating} disabled={!p.devices.length} onChange={() => call("/api/admin/simulator", { patient_id: p.id, enabled: !p.simulating }, `Streaming ${p.simulating ? "stopped" : "started"} for ${p.name}.`)} />
+                      <span className="track" />
+                      {p.simulating ? "On" : "Off"}
+                    </label>
+                  </td>
+                  <td className="small">{p.simulator_status === "ok" ? <span className="tag ok">Accepted</span> : p.simulator_status ? <span className="tag danger" title={p.simulator_status}>{p.simulator_status.slice(0, 32)}</span> : <span className="faint">–</span>}</td>
+                  <td style={{ minWidth: 150 }}>
+                    <select defaultValue="" disabled={!p.simulating || s.kind === "real"} title={s.kind === "real" ? "Episodes cannot be injected into real recordings" : ""}
+                      onChange={(e) => { const k = e.target.value; if (k) { call("/api/admin/simulator/episode", { patient_id: p.id, kind: k }, `Started a ${k} episode for ${p.name}. It develops over the next few minutes.`); e.target.value = ""; } }}>
+                      <option value="">{s.kind === "real" ? "Real data" : "Choose…"}</option>
+                      {EPISODES.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
     </>
   );
 }
+
+/* ---------------------------------------------------------------- audit */
 
 function Audit() {
   const { data, reload } = usePolling<AuditRow[]>("/api/admin/audit?limit=100", 10000);
@@ -257,36 +324,33 @@ function Audit() {
   };
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Audit log</h1>
-          <p className="muted">Append-only. Each row stores SHA-512 of the previous row; checkpoints are signed with the server's ECDSA P-384 key.</p>
-        </div>
-        <div className="summary">
-          <button className="ghost" onClick={checkpoint}>Sign checkpoint now</button>
-          <button className="primary" onClick={verify} disabled={busy}>{busy ? "Verifying…" : "Verify integrity"}</button>
-        </div>
-      </div>
+      <Head eyebrow="Administration" title="Privacy ledger" sub="Every sign-in, decryption, consent change and pairing, append-only. Each row stores the SHA-512 of the previous row; checkpoints are signed with the server's ECDSA P-384 key.">
+        <button className="btn ghost" onClick={checkpoint}><Icon.Key size={16} /> Sign checkpoint</button>
+        <button className="btn primary" onClick={verify} disabled={busy}><Icon.Shield size={16} /> {busy ? "Verifying…" : "Verify integrity"}</button>
+      </Head>
       {result && (
-        <div className={`banner ${result.ok ? "success" : "error"}`}>
-          {result.ok ? "Ledger intact." : "Tampering detected."} {result.rows} rows, {result.checkpoints} signed checkpoints, anchored through row{" "}
-          {result.anchored_through_row} ({result.unanchored_rows} newer rows await the next checkpoint).
-          {result.problems.length > 0 && <ul>{result.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+        <div className={`notice ${result.ok ? "success" : "error"}`}>
+          {result.ok ? <Icon.Check size={18} /> : <Icon.Alert size={18} />}
+          <div>
+            <b>{result.ok ? "Ledger intact." : "Tampering detected."}</b> {result.rows} rows, {result.checkpoints} signed checkpoints, anchored through row {result.anchored_through_row}
+            {result.unanchored_rows > 0 && ` (${result.unanchored_rows} newer rows await the next checkpoint)`}.
+            {result.problems.length > 0 && <ul>{result.problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+          </div>
         </div>
       )}
-      <div className="panel">
+      <div className="card scroll-x">
         <table className="table compact">
           <thead><tr><th>#</th><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th><th>Hash</th></tr></thead>
           <tbody>
             {data?.map((r) => (
               <tr key={r.id}>
-                <td className="num muted">{r.id}</td>
-                <td className="small">{new Date(r.ts).toLocaleString()}</td>
+                <td className="num faint">{r.id}</td>
+                <td className="small" style={{ whiteSpace: "nowrap" }}>{new Date(r.ts).toLocaleString()}</td>
                 <td>{r.actor}</td>
-                <td><span className="code">{r.action}</span></td>
+                <td><span className="tag mono">{r.action}</span></td>
                 <td className="small">{r.target}</td>
                 <td className="small muted">{r.detail}</td>
-                <td className="mono small muted">{r.hash}…</td>
+                <td className="mono xs faint">{r.hash}…</td>
               </tr>
             ))}
           </tbody>
@@ -296,39 +360,35 @@ function Audit() {
   );
 }
 
+/* ---------------------------------------------------------------- keys */
+
 interface KeyStatus { master_key_version: number; patients_by_key_version: Record<string, number>; dh_public_fingerprint: string; audit_key_fingerprint: string; algorithms: Record<string, string> }
 
 function Security() {
   const { data } = usePolling<KeyStatus>("/api/admin/keys", 30000);
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Security & keys</h1>
-          <p className="muted">Key material never leaves the server. Fingerprints are SHA-512 prefixes of the public keys.</p>
-        </div>
-      </div>
+      <Head eyebrow="Administration" title="Keys & algorithms" sub="Private keys never leave the server. Fingerprints are SHA-512 prefixes of the public keys." />
       {data && (
-        <div className="grid-2">
-          <section className="panel pad">
-            <h2>Keys</h2>
-            <dl className="kv">
-              <dt>Master key version</dt><dd>v{data.master_key_version}</dd>
-              <dt>Patient keys by version</dt>
-              <dd>{Object.entries(data.patients_by_key_version).map(([v, n]) => `v${v}: ${n}`).join(", ")}</dd>
-              <dt>DH public (ingest)</dt><dd className="mono small">{data.dh_public_fingerprint}</dd>
-              <dt>Audit ECDSA key</dt><dd className="mono small">{data.audit_key_fingerprint}</dd>
+        <div className="grid two">
+          <div className="card pad">
+            <h2>Key material</h2>
+            <dl className="kv" style={{ marginTop: 14 }}>
+              <dt>Master key</dt><dd>Version {data.master_key_version}</dd>
+              <dt>Patient keys</dt><dd>{Object.entries(data.patients_by_key_version).map(([v, n]) => `${n} on v${v}`).join(", ")}</dd>
+              <dt>Ingest DH key</dt><dd className="mono xs">{data.dh_public_fingerprint}</dd>
+              <dt>Ledger ECDSA key</dt><dd className="mono xs">{data.audit_key_fingerprint}</dd>
             </dl>
-            <p className="muted small">Rotate with <code>python scripts/rotate_master_key.py</code> (re-wraps keys only, no bulk re-encryption).</p>
-          </section>
-          <section className="panel pad">
+            <p className="muted small" style={{ marginTop: 14 }}>Rotate with <code>python scripts/rotate_master_key.py</code>. Only wrapped keys change; readings are not re-encrypted.</p>
+          </div>
+          <div className="card pad">
             <h2>Algorithms in use</h2>
-            <dl className="kv">
+            <dl className="kv" style={{ marginTop: 14 }}>
               {Object.entries(data.algorithms).map(([k, v]) => (
-                <div key={k} className="kv-row"><dt>{k.replace(/_/g, " ")}</dt><dd>{v}</dd></div>
+                <div key={k} style={{ display: "contents" }}><dt style={{ textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</dt><dd>{v}</dd></div>
               ))}
             </dl>
-          </section>
+          </div>
         </div>
       )}
     </>

@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
-import { PatientSummary, timeAgo } from "../api";
-import { BandBadge } from "../components/Monitor";
+import { PatientSummary, sourceInfo, timeAgo } from "../api";
+import { Icon, initials } from "../components/Icons";
+import { BandBadge, SourceChip } from "../components/Monitor";
 import { usePolling } from "../hooks";
 
 export default function Worklist() {
@@ -8,53 +9,66 @@ export default function Worklist() {
   const nav = useNavigate();
   const counts = { critical: 0, warning: 0, normal: 0 };
   data?.forEach((p) => p.band && (counts[p.band] += 1));
+  const openAlerts = data?.reduce((n, p) => n + p.open_alerts, 0) ?? 0;
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Worklist</h1>
-          <p className="muted">Your assigned patients, highest risk first. Updates every 5 seconds.</p>
-        </div>
-        <div className="summary">
-          <span className="pill critical">{counts.critical} critical</span>
-          <span className="pill warning">{counts.warning} warning</span>
-          <span className="pill normal">{counts.normal} stable</span>
+          <div className="eyebrow">Care workspace</div>
+          <h1>Patient worklist</h1>
+          <p className="sub">Your assigned patients, most urgent first. Updates every 5 seconds.</p>
         </div>
       </div>
-      {error && <div className="error banner">{error.message}</div>}
-      <div className="panel">
+
+      <div className="stats">
+        <div className="card stat critical"><div className="label"><Icon.Alert size={15} /> Critical</div><div className="num">{counts.critical}</div></div>
+        <div className="card stat warning"><div className="label"><Icon.Score size={15} /> Needs attention</div><div className="num">{counts.warning}</div></div>
+        <div className="card stat normal"><div className="label"><Icon.Check size={15} /> Stable</div><div className="num">{counts.normal}</div></div>
+        <div className="card stat"><div className="label"><Icon.Inbox size={15} /> Open alerts</div><div className="num">{openAlerts}</div></div>
+      </div>
+
+      {error && <div className="notice error">{error.message}</div>}
+      <div className="card scroll-x">
         <table className="table">
           <thead>
             <tr>
               <th>Patient</th>
               <th>Status</th>
-              <th className="num">AI risk</th>
+              <th>AI risk</th>
               <th className="num">Open alerts</th>
               <th>Last reading</th>
+              <th>Data</th>
             </tr>
           </thead>
           <tbody>
-            {data?.map((p) => (
-              <tr key={p.id} className={`clickable row-${p.band}`} onClick={() => nav(`/patients/${p.id}`)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && nav(`/patients/${p.id}`)}>
-                <td>
-                  <b>{p.name}</b>
-                  {!p.consent_active && <span className="tag">consent revoked</span>}
-                </td>
-                <td>
-                  <BandBadge band={p.band} />
-                </td>
-                <td className="num">{p.risk === null ? "–" : `${Math.round(p.risk * 100)}%`}</td>
-                <td className="num">{p.open_alerts || "–"}</td>
-                <td className="muted">{timeAgo(p.last_reading_at)}</td>
-              </tr>
-            ))}
+            {data?.map((p) => {
+              const risk = p.risk === null ? null : Math.round(p.risk * 100);
+              return (
+                <tr key={p.id} className="clickable" tabIndex={0} onClick={() => nav(`/patients/${p.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/patients/${p.id}`)}>
+                  <td>
+                    <div className="person">
+                      <span className="avatar">{initials(p.name)}</span>
+                      <div><b>{p.name}</b><span>P-{String(p.id).padStart(4, "0")}{!p.consent_active && " · sharing paused"}</span></div>
+                    </div>
+                  </td>
+                  <td><BandBadge band={p.band} /></td>
+                  <td>
+                    {risk === null ? <span className="muted">–</span> : (
+                      <div className="risk-cell">
+                        <span className="tnum" style={{ width: 36 }}>{risk}%</span>
+                        <div className={`meter ${risk >= 60 ? "critical" : risk >= 30 ? "warning" : ""}`}><i style={{ width: `${risk}%` }} /></div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="num">{p.open_alerts || <span className="muted">–</span>}</td>
+                  <td className="muted">{timeAgo(p.last_reading_at)}</td>
+                  <td title={sourceInfo(p.data_source).detail}><SourceChip source={p.data_source} /></td>
+                </tr>
+              );
+            })}
             {data && data.length === 0 && (
-              <tr>
-                <td colSpan={5} className="empty">
-                  No patients assigned to you yet.
-                </td>
-              </tr>
+              <tr><td colSpan={6} className="empty">No patients are assigned to you yet. Ask an administrator to add you to a care team.</td></tr>
             )}
           </tbody>
         </table>

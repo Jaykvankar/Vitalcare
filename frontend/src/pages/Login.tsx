@@ -3,6 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, Me } from "../api";
 import { homeFor, useAuth } from "../App";
+import { Icon } from "../components/Icons";
 
 type Step = { kind: "password" } | { kind: "verify" } | { kind: "enroll"; uri: string; secret: string };
 
@@ -57,73 +58,89 @@ export default function Login() {
   };
 
   return (
-    <div className="login-wrap">
-      <div className="login-card">
-        <div className="login-head">
-          <div className="brand big">
-            <span className="logo" aria-hidden>
-              <svg viewBox="0 0 24 24" width="22" height="22">
-                <path d="M2 12h4l2-5 4 10 3-7 2 2h5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            SecureRPM
-          </div>
-          <p className="muted">Remote patient monitoring with end-to-end encrypted vitals.</p>
+    <div className="login">
+      <section className="login-art">
+        <div className="side-brand">
+          <span className="mark"><Icon.Logo size={18} /></span>
+          <span className="name">SecureRPM</span>
         </div>
+        <svg className="wave" viewBox="0 0 600 120" preserveAspectRatio="none" height="140" width="100%">
+          <path d="M0 60 H170 L195 20 L225 105 L255 35 L275 60 H600" fill="none" stroke="currentColor" strokeWidth="3" />
+        </svg>
+        <div className="pitch">
+          <h1>Remote monitoring that keeps patient data private.</h1>
+          <p>Vital signs are encrypted on the device, analysed on arrival, and visible only to the care team the patient has consented to.</p>
+          <div className="points">
+            <div><Icon.Lock size={18} /> Diffie–Hellman + AES-256 sealing, RSA-signed readings</div>
+            <div><Icon.Score size={18} /> Clinical rules, NEWS2 and an AI early-warning model</div>
+            <div><Icon.Ledger size={18} /> Tamper-evident ledger of every access</div>
+          </div>
+        </div>
+        <div className="legal">Educational project. Not a certified medical device.</div>
+      </section>
 
-        {step.kind === "password" && (
-          <form onSubmit={submitPassword} className="form">
-            <label>
-              Username
-              <input autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
-            </label>
-            <label>
-              Password
-              <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            </label>
-            {error && <div className="error">{error}</div>}
-            <button className="primary" disabled={busy}>
-              {busy ? "Checking…" : "Sign in"}
-            </button>
-          </form>
-        )}
-
-        {step.kind !== "password" && (
-          <form onSubmit={submitCode} className="form">
-            {step.kind === "enroll" ? (
-              <div className="enroll">
-                <p>
-                  Clinician and admin accounts need a second factor. Scan this code in an authenticator app that supports
-                  <b> SHA-512</b> TOTP (Aegis, 2FAS, FreeOTP), then enter the 6-digit code.
-                </p>
-                <div className="qr">
-                  <QRCodeSVG value={step.uri} size={164} />
-                </div>
-                <code className="secret">{step.secret}</code>
-              </div>
-            ) : (
-              <p className="muted">Enter the 6-digit code from your authenticator app.</p>
-            )}
-            <label>
-              Authentication code
-              <input
-                autoFocus
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                required
-              />
-            </label>
-            {error && <div className="error">{error}</div>}
-            <button className="primary" disabled={busy || code.length !== 6}>
-              Verify
-            </button>
-          </form>
-        )}
-      </div>
+      <section className="login-form">
+        <div className="inner">
+          {step.kind === "password" ? (
+            <>
+              <h2>Sign in</h2>
+              <p className="sub">Use the account your care organisation gave you.</p>
+              <form onSubmit={submitPassword} className="form">
+                <label className="field">
+                  Username
+                  <input autoFocus autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+                </label>
+                <label className="field">
+                  Password
+                  <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                </label>
+                {error && <div className="notice error">{error}</div>}
+                <button className="btn primary block" disabled={busy}>
+                  {busy ? "Checking…" : "Continue"}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h2>{step.kind === "enroll" ? "Set up two-step sign-in" : "Two-step verification"}</h2>
+              <p className="sub">
+                {step.kind === "enroll"
+                  ? "Staff accounts need a second factor. Scan the code with an authenticator app that supports SHA-512 (Aegis, 2FAS or FreeOTP)."
+                  : "Enter the 6-digit code from your authenticator app."}
+              </p>
+              <form onSubmit={submitCode} className="form">
+                {step.kind === "enroll" && (
+                  <div>
+                    <div className="qr"><QRCodeSVG value={step.uri} size={168} /></div>
+                    <code className="secret">{step.secret}</code>
+                  </div>
+                )}
+                <label className="field">
+                  Authentication code
+                  <input
+                    autoFocus
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    value={code}
+                    style={{ letterSpacing: "0.3em", fontFamily: "var(--mono)", fontSize: "1.1rem" }}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                    required
+                  />
+                </label>
+                {error && <div className="notice error">{error}</div>}
+                <button className="btn primary block" disabled={busy || code.length !== 6}>
+                  Verify and sign in
+                </button>
+                <button type="button" className="btn ghost block" onClick={() => { setStep({ kind: "password" }); setError(""); }}>
+                  Use a different account
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

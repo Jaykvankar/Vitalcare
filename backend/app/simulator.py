@@ -5,7 +5,9 @@ Each simulated device owns an RSA-3072 private key. The keys live in a separate 
 RPM_SIM_PASSPHRASE via PBKDF2-HMAC-SHA-512. The server database only ever sees public keys,
 so a valid signature really proves the packet came from the key holder.
 
-Readings go through the real HTTPS ingest API, sealed (DH + AES-GCM) and signed (RSA-PSS).
+Devices join through the pairing protocol (security/pairing.py) and send readings through the real
+HTTPS ingest API, sealed (DH + AES-GCM) and signed (RSA-PSS). A device's data source is either the
+synthetic generator or a replay of a real recording (MIMIC-III demo or BIDMC, see ml/realdata.py).
 """
 from __future__ import annotations
 
@@ -20,8 +22,9 @@ import time
 import httpx
 
 from .config import get_settings
+from .ml import realdata
 from .ml.synth import EPISODES, PatientStream
-from .security import aead, sealing, signatures
+from .security import aead, pairing, sealing, signatures
 from .security.hashing import b64d, b64e, canonical
 
 log = logging.getLogger("rpm.simulator")
@@ -38,8 +41,6 @@ class Keystore:
             raise RuntimeError("RPM_SIM_PASSPHRASE is not set")
         self._pass = s.sim_passphrase.encode()
         self._lock = threading.Lock()
-        self._key: bytes | None = None
-        self._salt: bytes | None = None
         self.devices: dict[str, dict] = {}
         self._load()
 
@@ -54,8 +55,7 @@ class Keystore:
         doc = json.loads(self.path.read_text())
         self._salt = b64d(doc["salt"])
         self._key = self._derive(self._salt)
-        blob = aead.open_blob(self._key, b64d(doc["blob"]), canonical("sim-keystore", doc["salt"]))
-        self.devices = json.loads(blob)
+        self.devices = json.loads(aead.open_blob(self._key, b64d(doc["blob"]), canonical("sim-keystore", doc["salt"])))
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,16 +66,16 @@ class Keystore:
                                    "salt": salt_b64, "blob": b64e(blob)}))
         tmp.replace(self.path)
 
-    def create_device(self, device_id: str, patient_id: int) -> str:
-        """Generate the device key pair 'on the device'; return only the public key PEM."""
-        key = signatures.rsa_generate()
+    def add(self, device_id: str, patient_id: int, private_pem: bytes, source: str) -> None:
         with self._lock:
-            self.devices[device_id] = {
-                "patient_id": patient_id,
-                "private_pem": signatures.private_pem(key).decode(),
-            }
+            self.devices[device_id] = {"patient_id": patient_id, "private_pem": private_pem.decode(), "source": source}
             self._save()
-        return signatures.public_pem(key)
+
+    def set_source(self, device_id: str, source: str, offset: int = 0) -> None:
+        with self._lock:
+            self.devices[device_id]["source"] = source
+            self.devices[device_id]["offset"] = offset  # where a real-data replay continues from
+            self._save()
 
     def private_key(self, device_id: str):  # noqa: ANN201
         return signatures.load_private_pem(self.devices[device_id]["private_pem"].encode())
@@ -97,8 +97,19 @@ def build_packet(device_id: str, private_key, server_pub_raw: bytes, vitals: dic
             "sig": b64e(sig)}
 
 
-def stream_for(device_id: str) -> PatientStream:
-    # Seeded by device id so a patient's baseline is stable across restarts.
+def pairing_request(pairing_id: str, code: str) -> tuple[bytes, dict]:
+    """What a device does at pairing time: make its own key pair, prove knowledge of the code."""
+    key = signatures.rsa_generate()
+    pub = signatures.public_pem(key)
+    body = {"pairing_id": pairing_id, "public_key_pem": pub, "proof": b64e(pairing.proof(code, pairing_id, pub))}
+    return signatures.private_pem(key), body
+
+
+def stream_for(device_id: str, source: str = "synthetic", start: int = 0):  # noqa: ANN201
+    real = realdata.stream_for_source(source, start) if source != "synthetic" else None
+    if real is not None:
+        return real
+    # Seeded by device id so a patient's synthetic baseline is stable across restarts.
     return PatientStream(random.Random(device_id), episode_rate=0.0008, activity_rate=0.003)
 
 
@@ -110,7 +121,7 @@ class SimulatorRunner:
     def __init__(self, interval: float = 5.0) -> None:
         self.interval = interval
         self.enabled: dict[int, bool] = {}          # patient_id -> on/off
-        self.streams: dict[str, PatientStream] = {}
+        self.streams: dict[str, object] = {}
         self.last_result: dict[int, str] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -137,15 +148,50 @@ class SimulatorRunner:
         with self.lock:
             self.enabled[patient_id] = on
 
+    def source_for_patient(self, patient_id: int) -> str | None:
+        for info in self.keystore.devices.values():
+            if info["patient_id"] == patient_id:
+                return info.get("source", "synthetic")
+        return None
+
+    def set_source(self, patient_id: int, source: str) -> bool:
+        found = False
+        for dev_id, info in list(self.keystore.devices.items()):
+            if info["patient_id"] == patient_id:
+                self.keystore.set_source(dev_id, source)
+                self.streams.pop(dev_id, None)
+                found = True
+        return found
+
     def trigger(self, patient_id: int, kind: str) -> bool:
         if kind not in EPISODES:
             raise ValueError("unknown episode type")
         found = False
         for dev_id, info in self.keystore.devices.items():
-            if info["patient_id"] == patient_id:
+            if info["patient_id"] == patient_id and info.get("source", "synthetic") == "synthetic":
                 self.streams.setdefault(dev_id, stream_for(dev_id)).start(kind, scale=0.5)
                 found = True
         return found
+
+    def pair_over_http(self, pairing_id: str, code: str, source: str) -> str:
+        """Act as a brand-new device: pair through the public /api/devices/pair endpoint."""
+        s = get_settings()
+        private_pem, body = pairing_request(pairing_id, code)
+        with httpx.Client(base_url=s.self_url, verify=s.tls_verify, timeout=20) as client:
+            r = client.post("/api/devices/pair", json=body)
+        if r.status_code != 200:
+            raise RuntimeError(r.json().get("detail", r.text))
+        device_id = r.json()["device_id"]
+        from .db import SessionLocal
+        from .models import Device
+
+        db = SessionLocal()
+        try:
+            patient_id = db.get(Device, device_id).patient_id
+        finally:
+            db.close()
+        self.keystore.add(device_id, patient_id, private_pem, source)
+        return device_id
 
     def _pinned_server_key(self, client: httpx.Client) -> bytes:
         if self._server_pub is None:
@@ -173,12 +219,17 @@ class SimulatorRunner:
                         pid = info["patient_id"]
                         if pid not in active:
                             continue
-                        stream = self.streams.setdefault(dev_id, stream_for(dev_id))
+                        stream = self.streams.get(dev_id)
+                        if stream is None:
+                            stream = self.streams[dev_id] = stream_for(dev_id, info.get("source", "synthetic"), info.get("offset", 0))
                         vitals, _, _ = stream.step()
                         pkt = build_packet(dev_id, self.keystore.private_key(dev_id), server_pub, vitals,
                                            ts=int(time.time()), seq=self._next_seq(dev_id))
                         r = client.post("/api/ingest", json=pkt)
-                        self.last_result[pid] = "ok" if r.status_code == 200 else f"{r.status_code}: {r.text[:120]}"
+                        if r.status_code == 200:
+                            self.last_result[pid] = "ok"
+                        else:
+                            self.last_result[pid] = f"{r.status_code}: {r.json().get('detail', '')}"[:120]
                 except Exception as exc:  # noqa: BLE001  (keep the demo thread alive)
                     log.warning("simulator error: %s", exc)
                     self._server_pub = None

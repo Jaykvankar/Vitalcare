@@ -57,6 +57,7 @@ def create_schema() -> None:
 
     eng = engine()
     Base.metadata.create_all(eng)
+    _add_missing_columns(eng)
     _install_append_only_guards(eng)
 
 
@@ -79,3 +80,21 @@ def _install_append_only_guards(eng: Engine) -> None:
                 "CREATE TRIGGER audit_no_change BEFORE UPDATE OR DELETE ON audit_log "
                 "FOR EACH ROW EXECUTE FUNCTION audit_append_only();"
             ))
+
+
+def _add_missing_columns(eng: Engine) -> None:
+    """Tiny forward-only migration: add columns introduced after a database was created."""
+    from sqlalchemy import inspect
+
+    from . import models  # noqa: F401
+
+    insp = inspect(eng)
+    with eng.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing:
+                    ddl = col.type.compile(dialect=eng.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))

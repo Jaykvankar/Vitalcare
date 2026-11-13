@@ -18,6 +18,7 @@ from . import services
 from .config import PROJECT_DIR, get_settings
 from .db import SessionLocal, create_schema, init_engine
 from .models import Assignment, User
+from .ml import realdata
 from .readings import ingest
 from .security import audit, auth, server_keys
 from .simulator import build_packet, runner, stream_for
@@ -37,6 +38,18 @@ PEOPLE = [
 # clinician -> patients
 ASSIGN = {"dr.mehta": ["p.sharma", "p.iyer", "p.khan"], "dr.rao": ["p.khan", "p.das"]}
 # history episodes so charts and alerts have something to show: patient -> (hours ago, kind)
+# This patient's device replays a real ICU stay from the MIMIC-III demo (if downloaded)
+REAL_PATIENT = "p.khan"
+
+
+def pick_mimic_stay() -> str:
+    """A long stay of a patient who died in hospital: real deterioration for the demo."""
+    stays = realdata.load_mimic()
+    died = [(len(s["rows"]), k) for k, s in stays.items() if s["died_in_hospital"] and len(s["rows"]) >= 144]
+    pool = died or [(len(s["rows"]), k) for k, s in stays.items()]
+    return max(pool)[1]
+
+
 HISTORY_EPISODES = {"p.khan": [(5, "hypoxia")], "p.iyer": [(14, "fever")], "p.sharma": [(9, "activity")]}
 
 
@@ -81,11 +94,19 @@ def main() -> None:
         u = users[username]
         if u.role != "patient":
             continue
-        dev = services.provision_simulated_device(db, u.patient.id, "Wearable monitor")
+        source = "synthetic"
+        if username == REAL_PATIENT and realdata.available()["mimic"]:
+            source = f"mimic:{pick_mimic_stay()}"
+        dev = services.provision_simulated_device(db, u.patient.id, "Wearable monitor",
+                                                  created_by=users["admin"].id, source=source)
         priv = runner.keystore.private_key(dev.id)
-        stream = stream_for(dev.id)
-        stream.episode_rate = stream.activity_rate = 0.0
-        starts = {now - h * 3600: kind for h, kind in HISTORY_EPISODES.get(username, [])}
+        stream = stream_for(dev.id, source)
+        if source == "synthetic":
+            stream.episode_rate = stream.activity_rate = 0.0
+        else:
+            starts = {}
+        if source == "synthetic":
+            starts = {now - h * 3600: kind for h, kind in HISTORY_EPISODES.get(username, [])}
         t0 = now - HISTORY_HOURS * 3600
         n = 0
         for ts in range(t0, now - 60, HISTORY_STEP_S):
@@ -97,7 +118,9 @@ def main() -> None:
             pkt = build_packet(dev.id, priv, keys.dh_public_raw, vitals, ts=ts, seq=ts * 1000)
             ingest.process(db, ingest.Packet(**pkt), now=ts)
             n += 1
-        print(f"  {username}: {n} encrypted readings via device {dev.id}")
+        if source != "synthetic":
+            runner.keystore.set_source(dev.id, source, offset=n)  # live replay continues after the history
+        print(f"  {username}: {n} encrypted readings via device {dev.id} (source: {source})")
 
     db.close()
     audit.checkpoint_now()

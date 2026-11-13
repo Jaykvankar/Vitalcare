@@ -30,7 +30,17 @@ def _summary(db: Session, p: Patient) -> dict:
     open_alerts = db.scalar(select(func.count(Alert.id)).where(Alert.patient_id == p.id, Alert.status == "open"))
     return {"id": p.id, "name": p.user.full_name, "band": p.last_band, "risk": p.last_score,
             "last_reading_at": _iso(p.last_reading_at), "open_alerts": open_alerts,
-            "consent_active": p.consent_active}
+            "consent_active": p.consent_active, "data_source": _source(p.id)}
+
+
+def _source(patient_id: int) -> str:
+    """Where this patient's (simulated) device gets its numbers: synthetic generator or a real-data replay."""
+    from ..simulator import runner
+
+    try:
+        return runner.source_for_patient(patient_id) or "none"
+    except RuntimeError:
+        return "unknown"
 
 
 @router.get("/patients")

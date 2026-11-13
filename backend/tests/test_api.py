@@ -153,6 +153,52 @@ def test_csrf_header_and_origin_required(world):
     assert r.status_code == 403
 
 
+def test_device_pairing_flow(world, client_for):
+    from app.security.hashing import b64e
+    from app.security.pairing import proof
+    from app.security import signatures
+
+    dev = TestClient(world["app"], base_url="https://testserver")
+    # unassigned clinician cannot issue a code; assigned clinician can
+    assert client_for("clin2").post("/api/devices/pairing-codes", json={"patient_id": world["ids"]["p1"]}).status_code == 404
+    c = client_for("clin1")
+    r = c.post("/api/devices/pairing-codes", json={"patient_id": world["ids"]["p1"], "label": "Ward watch"})
+    assert r.status_code == 200
+    pid, code = r.json()["pairing_id"], r.json()["code"]
+
+    key = signatures.rsa_generate()
+    pub = signatures.public_pem(key)
+    wrong = {"pairing_id": pid, "public_key_pem": pub, "proof": b64e(proof("AAAA-AAAA-AAAA", pid, pub))}
+    assert dev.post("/api/devices/pair", json=wrong).status_code == 401
+    good = {"pairing_id": pid, "public_key_pem": pub, "proof": b64e(proof(code, pid, pub))}
+    r = dev.post("/api/devices/pair", json=good)
+    assert r.status_code == 200, r.text
+    device_id = r.json()["device_id"]
+    assert dev.post("/api/devices/pair", json=good).status_code == 409          # one-time code
+
+    # the paired device can now send readings
+    assert dev.post("/api/ingest", json=packet(world, NORMAL, key=key, device_id=device_id)).status_code == 200
+    assert c.get(f"/api/patients/{world['ids']['p1']}/alerts").status_code == 200
+    # revoke -> readings rejected
+    assert c.post(f"/api/devices/{device_id}/revoke").status_code == 200
+    assert dev.post("/api/ingest", json=packet(world, NORMAL, key=key, device_id=device_id)).status_code == 401
+
+
+def test_pairing_code_burns_after_five_wrong_proofs(world, client_for):
+    from app.security.hashing import b64e
+    from app.security.pairing import proof
+    from app.security import signatures
+
+    dev = TestClient(world["app"], base_url="https://testserver")
+    r = client_for("admin").post("/api/devices/pairing-codes", json={"patient_id": world["ids"]["p2"]})
+    pid, code = r.json()["pairing_id"], r.json()["code"]
+    pub = signatures.public_pem(signatures.rsa_generate())
+    for _ in range(5):
+        dev.post("/api/devices/pair", json={"pairing_id": pid, "public_key_pem": pub, "proof": b64e(b"x" * 64)})
+    good = {"pairing_id": pid, "public_key_pem": pub, "proof": b64e(proof(code, pid, pub))}
+    assert dev.post("/api/devices/pair", json=good).status_code == 429
+
+
 def test_audit_chain_detects_tampering(world, client_for):
     from sqlalchemy import text
 

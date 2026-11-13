@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import admin, auth_routes, ingest_routes, patients
+from .api import admin, auth_routes, devices, ingest_routes, patients
 from .config import PROJECT_DIR, get_settings
 from .db import create_schema, init_engine
 from .ml.infer import load_model
@@ -18,6 +18,8 @@ from .security import audit, server_keys
 log = logging.getLogger("rpm")
 FRONTEND_DIST = PROJECT_DIR / "frontend" / "dist"
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
+# Device endpoints authenticate with signatures / HMAC proofs, not cookies, so CSRF checks do not apply.
+DEVICE_PATHS = ("/api/ingest", "/api/devices/pair")
 
 
 def init_backend() -> None:
@@ -48,7 +50,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     async def security_middleware(request: Request, call_next):  # noqa: ANN001, ANN202
         path = request.url.path
         # CSRF defence for cookie-authenticated calls. Device ingest is authenticated by signatures instead.
-        if request.method in UNSAFE and path.startswith("/api/") and not path.startswith("/api/ingest"):
+        if request.method in UNSAFE and path.startswith("/api/") and not path.startswith(DEVICE_PATHS):
             origin = request.headers.get("origin")
             if origin is not None and origin not in get_settings().allowed_origins:
                 return JSONResponse({"detail": "Cross-origin request blocked"}, status_code=403)
@@ -79,6 +81,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app.include_router(patients.router)
     app.include_router(admin.router)
     app.include_router(ingest_routes.router)
+    app.include_router(devices.router)
 
     @app.get("/api/health")
     def health() -> dict:

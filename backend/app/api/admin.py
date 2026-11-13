@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .. import services
 from ..config import get_settings
 from ..db import get_db
+from ..ml import realdata
 from ..ml.synth import EPISODES
 from ..models import Assignment, AuditLog, Device, Patient, User
 from ..security import audit, auth, server_keys
@@ -51,7 +52,7 @@ def create_user(body: UserIn, admin: User = Depends(admin_only), db: Session = D
         db.rollback()
         raise HTTPException(409, "Username already exists") from exc
     if user.patient and body.with_device:
-        services.provision_simulated_device(db, user.patient.id, "Wearable monitor")
+        services.provision_simulated_device(db, user.patient.id, "Wearable monitor", created_by=admin.id)
     audit.append("user_created", actor_id=admin.id, actor=admin.username, target=f"user:{user.id}",
                  detail=f"role={user.role}")
     return {"id": user.id}
@@ -90,12 +91,13 @@ def reset_mfa(user_id: int, admin: User = Depends(admin_only), db: Session = Dep
 def list_patients(_: User = Depends(admin_only), db: Session = Depends(get_db)) -> list[dict]:
     out = []
     for p in db.execute(select(Patient)).scalars():
-        devices = db.execute(select(Device).where(Device.patient_id == p.id)).scalars().all()
+        devices = db.execute(select(Device).where(Device.patient_id == p.id, Device.active.is_(True))).scalars().all()
         out.append({"id": p.id, "name": p.user.full_name, "username": p.user.username,
                     "consent_active": p.consent_active, "key_version": p.key_version,
                     "devices": [{"id": d.id, "label": d.label} for d in devices],
                     "simulating": runner.enabled.get(p.id, False),
-                    "simulator_status": runner.last_result.get(p.id)})
+                    "simulator_status": runner.last_result.get(p.id),
+                    "source": runner.source_for_patient(p.id)})
     return out
 
 
@@ -152,7 +154,7 @@ class DeviceIn(BaseModel):
 def add_device(body: DeviceIn, admin: User = Depends(admin_only), db: Session = Depends(get_db)) -> dict:
     if db.get(Patient, body.patient_id) is None:
         raise HTTPException(404, "Patient not found")
-    d = services.provision_simulated_device(db, body.patient_id, body.label)
+    d = services.provision_simulated_device(db, body.patient_id, body.label, created_by=admin.id)
     audit.append("device_registered", actor_id=admin.id, actor=admin.username,
                  target=f"patient:{body.patient_id}", detail=f"device={d.id}")
     return {"id": d.id}
@@ -209,6 +211,43 @@ def simulator_episode(body: EpisodeIn, admin: User = Depends(admin_only)) -> dic
     audit.append("simulator_episode", actor_id=admin.id, actor=admin.username,
                  target=f"patient:{body.patient_id}", detail=body.kind)
     return {"ok": True}
+
+
+@router.get("/simulator/sources")
+def simulator_sources(_: User = Depends(admin_only)) -> dict:
+    return {"available": realdata.available(), "sources": realdata.replay_sources()}
+
+
+class SourceIn(BaseModel):
+    patient_id: int
+    source: str = Field(max_length=64)
+
+
+@router.post("/simulator/source")
+def simulator_source(body: SourceIn, admin: User = Depends(admin_only)) -> dict:
+    if body.source != "synthetic" and realdata.stream_for_source(body.source) is None:
+        raise HTTPException(400, "Unknown data source")
+    if not runner.set_source(body.patient_id, body.source):
+        raise HTTPException(404, "No simulated device for this patient")
+    audit.append("simulator_source", actor_id=admin.id, actor=admin.username,
+                 target=f"patient:{body.patient_id}", detail=body.source)
+    return {"ok": True}
+
+
+class SimPairIn(BaseModel):
+    pairing_id: str = Field(max_length=32)
+    code: str = Field(min_length=12, max_length=20)
+    source: str = Field("synthetic", max_length=64)
+
+
+@router.post("/simulator/pair")
+def simulator_pair(body: SimPairIn, admin: User = Depends(admin_only)) -> dict:
+    """Make the simulator act as a new physical device that was handed a pairing code."""
+    try:
+        device_id = runner.pair_over_http(body.pairing_id, body.code, body.source)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"device_id": device_id}
 
 
 @router.get("/keys")

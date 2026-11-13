@@ -10,7 +10,8 @@ The server then:
 
 Clinicians see a risk-sorted worklist, charts and alerts. Patients see their own data and control consent.
 
-> Educational project, not a certified medical device. All data is synthetic.
+> Educational project, not a certified medical device. Patients and names are fictional. Vital signs are either
+> synthetic or **replayed from real, de-identified ICU recordings** (PhysioNet MIMIC-III demo and BIDMC; see below).
 
 ## Quick start (Windows, from the project folder)
 
@@ -55,6 +56,44 @@ Demo flow:
 3. Sign in as a patient, view the data and toggle consent.
 4. Admin → **Audit log** → *Verify integrity*.
 
+## Real data (optional, about 77 MB)
+
+The model is trained on synthetic episodes, because no open dataset marks *when* deterioration started.
+Real recordings are used two ways: to **evaluate** the system and to **replay** through a simulated device.
+
+Download into `data/real/` (git-ignored, open access, no login):
+- **MIMIC-III Clinical Database Demo** (ODbL): `CHARTEVENTS.csv`, `D_ITEMS.csv`, `ADMISSIONS.csv`, `ICUSTAYS.csv`, `PATIENTS.csv` from `https://physionet.org/files/mimiciii-demo/1.4/`, saved to `data/real/mimic/`.
+- **BIDMC** (ODC-BY): `bidmc_01_Numerics.csv` … `bidmc_53_Numerics.csv` from `https://physionet.org/files/bidmc/1.0.0/bidmc_csv/`, saved to `data/real/bidmc/`.
+
+Then run, from `backend/`:
+
+```bash
+..\.venv\Scripts\python -m app.ml.eval_real
+```
+
+This writes [docs/real_data_report.md](docs/real_data_report.md). Highlights on 100 real ICU stays (32 deaths):
+- In the first 24 h, the model separates later in-hospital death better than NEWS2 (AUROC 0.62 vs 0.53).
+- Neither is strong enough for clinical use.
+
+When the data is present, seeding makes Imran Khan's monitor replay a real MIMIC-III ICU stay. Admin → **Data sources** can switch any monitor to a MIMIC stay or a BIDMC record.
+
+## Pairing a device
+
+Admins, and clinicians on the patient's care team, can pair devices (patient record → Devices → **Pair device**, or Admin → **Devices & pairing**):
+1. A one-time code is issued (10 min, `XXXX-XXXX-XXXX`).
+2. The device generates its own RSA-3072 key and proves it knows the code with HMAC-SHA-512. The code never crosses the network.
+3. Five wrong proofs burn the code; a used code cannot be reused.
+4. Devices can be revoked, and ingest rejects them immediately.
+
+Pairing from the command line:
+
+```bash
+.venv\Scripts\python scripts\device_client.py pair --pairing-id ID --code ABCD-EFGH-JKLM
+```
+```bash
+.venv\Scripts\python scripts\device_client.py stream --source synthetic
+```
+
 ## Tests and tools
 
 ```bash
@@ -68,6 +107,7 @@ Covers:
 
 | Script | What it does |
 |---|---|
+| `scripts/device_client.py` | Stand-alone device: pair with a code, then stream sealed + signed readings |
 | `scripts/crypto_demo.py` | Prints every crypto step (DH values, AES ciphertext, digest, RSA/ECDSA signatures) for the viva |
 | `scripts/verify_audit.py` | Recomputes the audit chain and checks checkpoint signatures |
 | `scripts/rotate_master_key.py` | Re-wraps patient keys, TOTP secrets and server keys under a new master key (server stopped) |
@@ -127,6 +167,9 @@ Unauthorized and non-existent patients both return **404**, so IDs cannot be pro
 | Data leakage via logs | Only reason codes (`SPO2_LOW` …) are stored or logged in clear, never vital values |
 
 Known limits:
+- The model is trained on synthetic data. Real data is only used to evaluate it (indicative, 100 stays), so it is not clinically validated.
+- No real wearable hardware: devices are simulated. The pairing protocol and `device_client.py` are what a real device would implement.
+- MIMIC vitals are hourly while the model expects minute-level readings, and NEWS2 lacks the oxygen-therapy and consciousness inputs.
 - The master key lives in an environment variable. Production would use an HSM or KMS.
 - Rate limits and the TOTP replay guard are in-memory (single process).
 - Polling read events are logged once per minute per viewer.

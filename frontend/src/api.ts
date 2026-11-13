@@ -82,6 +82,26 @@ export interface PatientSummary {
   last_reading_at: string | null;
   open_alerts: number;
   consent_active: boolean;
+  data_source: string;
+}
+
+export function sourceInfo(source: string | undefined): { kind: "real" | "synthetic" | "none"; label: string; detail: string } {
+  if (!source || source === "none" || source === "unknown") return { kind: "none", label: "No device", detail: "No paired device" };
+  if (source.startsWith("mimic:"))
+    return { kind: "real", label: "Real data replay", detail: `MIMIC-III ICU stay ${source.split(":")[1]} (de-identified)` };
+  if (source.startsWith("bidmc:"))
+    return { kind: "real", label: "Real data replay", detail: `BIDMC record ${source.split(":")[1]} · HR/SpO₂/RR real, BP/temp not recorded` };
+  return { kind: "synthetic", label: "Synthetic data", detail: "Generated vital signs" };
+}
+
+export interface DeviceRow {
+  id: string;
+  label: string;
+  active: boolean;
+  last_seen: string | null;
+  paired_at: string | null;
+  paired_by: string;
+  revoked_at: string | null;
 }
 
 export interface PatientProfile extends PatientSummary {

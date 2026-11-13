@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, timeAgo } from "../api";
 import { Icon } from "../components/Icons";
 import { usePolling } from "../hooks";
@@ -18,6 +18,11 @@ export default function SecurityInspector() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const withPackets = data?.devices.filter((d) => d.packets.length > 0) ?? [];
+  // Pin the first device that has data, so the view does not jump as other devices send readings.
+  const firstWithData = withPackets[0]?.id ?? null;
+  useEffect(() => {
+    if (!picked && firstWithData) setPicked(firstWithData);
+  }, [picked, firstWithData]);
   const device = data?.devices.find((d) => d.id === picked) ?? withPackets[0] ?? data?.devices[0];
   const packet = device?.packets[0];
 

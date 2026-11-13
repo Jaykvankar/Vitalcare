@@ -118,6 +118,28 @@ def regenerate_recovery_codes(user: User = Depends(auth.require_role("admin", "c
     return {"recovery_codes": codes}
 
 
+@router.get("/demo-code")
+def demo_code(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Demo helper: the current 6-digit code, so a presenter does not need a phone.
+
+    Only when the server runs in demo mode (demo.py sets RPM_DEMO_MODE), only for accounts the demo
+    seed created, and only after the correct password (a pending session). Never available otherwise.
+    """
+    from ..config import get_settings
+
+    if not get_settings().demo_mode:
+        raise HTTPException(404, "Not found")
+    user, sess = auth.pending_user(request, db)
+    secret = auth.load_totp_secret(user) if user.demo_account and user.totp_confirmed else None
+    if secret is None or sess.mfa_ok:
+        raise HTTPException(404, "Not found")
+    import time
+
+    now = time.time()
+    audit.append("demo_code_shown", actor_id=user.id, actor=user.username)
+    return {"code": auth.totp(secret).now(), "seconds_left": int(30 - now % 30)}
+
+
 @router.post("/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
     auth.destroy_session(request, db, response)

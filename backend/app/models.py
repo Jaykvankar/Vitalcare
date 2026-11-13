@@ -39,6 +39,8 @@ class User(Base):
     # Last TOTP time-step accepted (replay guard, shared by all server processes)
     totp_last_step: Mapped[int] = mapped_column(BigInteger, default=0)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Created by the demo seed. Only such accounts may see the on-screen demo code, and only in demo mode.
+    demo_account: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

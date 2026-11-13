@@ -74,4 +74,5 @@ def test_migration_0002_adds_columns_to_an_older_database(tmp_path):
     for table in ("devices", "pairing_codes"):
         assert "device_type" in {c["name"] for c in insp.get_columns(table)}
     with eng.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002_device_type"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003_demo_account"
+    assert "demo_account" in {c["name"] for c in insp.get_columns("users")}

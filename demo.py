@@ -82,7 +82,7 @@ def main() -> None:
 """)
     if "recovery codes" not in creds:
         print("    (This demo database predates recovery codes; staff can create them under Account.)\n")
-    env = {**os.environ, "RPM_DEMO_AUTOSTREAM": "true"}
+    env = {**os.environ, "RPM_DEMO_AUTOSTREAM": "true", "RPM_DEMO_MODE": "true"}
     cmd = [PY, str(ROOT / "run_server.py")] + ([] if a.https else ["--http"])
     try:
         sys.exit(subprocess.call(cmd, env=env))  # noqa: S603

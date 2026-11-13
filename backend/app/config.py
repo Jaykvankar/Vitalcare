@@ -52,6 +52,7 @@ class Settings:
     pbkdf2_iterations: int = 210_000
     retention_days: int = 365
     run_jobs: bool = True
+    demo_mode: bool = False
 
     def key_for_version(self, version: int) -> bytes:
         if version == self.master_key_version:
@@ -119,6 +120,7 @@ def load_settings() -> Settings:
         secure_cookies=os.environ.get("RPM_SECURE_COOKIES", "true").lower() == "true",
         retention_days=_int_env("RPM_RETENTION_DAYS", 365, minimum=0),
         run_jobs=os.environ.get("RPM_RUN_JOBS", "true").lower() == "true",
+        demo_mode=os.environ.get("RPM_DEMO_MODE", "false").lower() == "true",
         allowed_origins=origins,
     )
 

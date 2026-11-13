@@ -229,3 +229,38 @@ def test_access_log_carries_request_id(world, caplog):
 
     line = next(rec for rec in caplog.records if rec.name == "rpm.access")
     assert '"request_id":"trace-12345678"' in JsonFormatter().format(line)
+
+
+def test_demo_code_only_in_demo_mode_for_seeded_accounts_after_password(world):
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import User
+    from app.security import auth
+
+    c = raw_client(world)
+    assert c.get("/api/auth/demo-code").status_code == 404           # demo mode off by default
+    settings = get_settings()
+    settings.demo_mode = True
+    try:
+        assert c.get("/api/auth/demo-code").status_code == 401       # no password yet
+        c.post("/api/auth/login", json={"username": "clin2", "password": world["pw"]})
+        assert c.get("/api/auth/demo-code").status_code == 404       # not a seeded demo account
+
+        db = SessionLocal()
+        db.query(User).filter_by(username="clin2").update({"demo_account": True})
+        db.commit()
+        db.close()
+        r = c.get("/api/auth/demo-code")
+        assert r.status_code == 200
+        expected = pyotp.TOTP(world["totp"]["clin2"], digest=hashlib.sha512).now()
+        assert r.json()["code"] == expected and 0 < r.json()["seconds_left"] <= 30
+        reset_totp_guard()
+        assert c.post("/api/auth/mfa", json={"code": r.json()["code"]}).status_code == 200
+        assert c.get("/api/auth/demo-code").status_code == 404       # nothing to show once signed in
+    finally:
+        settings.demo_mode = False
+        db = SessionLocal()
+        db.query(User).filter_by(username="clin2").update({"demo_account": False})
+        db.commit()
+        db.close()
+        auth.mfa_limiter.reset()

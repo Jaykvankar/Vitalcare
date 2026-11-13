@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, Me } from "../api";
@@ -197,6 +197,7 @@ export default function Login() {
                     <code className="secret">{step.secret}</code>
                   </div>
                 )}
+                {step.kind === "verify" && !useRecovery && <DemoCode onUse={setCode} />}
                 {useRecovery ? (
                   <label className="field">
                     Recovery code
@@ -239,6 +240,39 @@ export default function Login() {
         <p className="login-note">Staff enter a 6-digit code after the password. Patients sign in with a password only.</p>
         <DemoRoles active={username} onPick={(user, pass) => { setUsername(user); setPassword(pass); setError(""); setStep({ kind: "password" }); }} />
       </section>
+    </div>
+  );
+}
+
+/** Demo mode only: shows the current code for a seeded demo account so a presenter needs no phone.
+ *  The server returns 404 unless it runs in demo mode, the account was created by the demo seed,
+ *  and the password step already succeeded, so on a real installation this renders nothing. */
+function DemoCode({ onUse }: { onUse: (code: string) => void }) {
+  const [demo, setDemo] = useState<{ code: string; seconds_left: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      api<{ code: string; seconds_left: number }>("/api/auth/demo-code")
+        .then((d) => live && setDemo(d))
+        .catch(() => live && setDemo(null));
+    load();
+    const id = window.setInterval(load, 5000);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
+  }, []);
+  if (!demo) return null;
+  return (
+    <div className="notice info demo-code" role="status">
+      <Icon.Key size={18} />
+      <div>
+        <b>Demo mode.</b> Current code for this demo account: <code className="mono">{demo.code}</code>
+        <span className="muted xs"> (changes every 30 s)</span>
+        <div style={{ marginTop: 6 }}>
+          <button type="button" className="btn secondary sm" onClick={() => onUse(demo.code)}>Use this code</button>
+        </div>
+      </div>
     </div>
   );
 }

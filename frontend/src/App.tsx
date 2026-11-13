@@ -165,7 +165,13 @@ function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setThe
             <span>Workspace</span>/<b>{crumb}</b>
           </div>
           <div className="right">
-            <span className="status-dot">Encrypted connection</span>
+            {window.location.protocol === "https:" ? (
+              <span className="status-dot" title="This page and its data travel over HTTPS (TLS 1.3).">Encrypted connection</span>
+            ) : (
+              <span className="status-dot demo" title="This local demo page uses plain HTTP. Device readings are still sealed with Diffie-Hellman + AES-256-GCM and signed before they leave the device.">
+                Local demo (HTTP) · readings still sealed
+              </span>
+            )}
             <span className="avatar" title={me.full_name}>{initials(me.full_name)}</span>
           </div>
         </header>

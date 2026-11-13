@@ -99,6 +99,7 @@ def main() -> None:
             totp_secret = auth.new_totp_secret()
             auth.store_totp_secret(u, totp_secret)
             u.totp_confirmed = True
+            u.demo_account = True
             db.commit()
             recovery[username] = auth.issue_recovery_codes(db, u)
         users[username] = u

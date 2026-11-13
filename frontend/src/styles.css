@@ -289,6 +289,18 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 0.82re
 .grid { display: grid; gap: 20px; }
 .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.main-side { grid-template-columns: minmax(0, 1fr) 360px; align-items: start; }
+.grid.chart-row { grid-template-columns: minmax(0, 1fr) 340px; align-items: stretch; }
+.grid.chart-row > :only-child { grid-column: 1 / -1; }
+.grid.chart-row > .assess { display: flex; flex-direction: column; }
+.grid.chart-row > .assess .foot { margin-top: auto; }
+@media (max-width: 1180px) { .grid.chart-row { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 900px) {
+  .grid.chart-row { grid-template-columns: minmax(0, 1fr) 250px; gap: 14px; }
+  .grid.chart-row > .assess { padding: 16px; }
+  .grid.chart-row > .assess .verdict { font-size: 1.15rem; }
+  .grid.chart-row > .assess .foot { flex-direction: column; gap: 4px; }
+}
+@media (max-width: 600px) { .grid.chart-row { grid-template-columns: 1fr; } }
 .grid.side-main { grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
 .stack { display: flex; flex-direction: column; gap: 20px; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

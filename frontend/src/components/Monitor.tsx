@@ -375,15 +375,14 @@ export function Monitor({ patientId, patientName, canAck, side }: { patientId: n
   return (
     <>
       <VitalCards latest={data?.latest ?? null} points={sparkSource?.points ?? []} />
+      {/* The AI explanation sits beside the chart it explains; alerts and extra cards follow below. */}
+      <div className="grid chart-row">
+        <TrendCard data={data} range={range} setRange={setRange} />
+        <AssessmentCard latest={data?.latest ?? null} />
+      </div>
       <div className="grid main-side">
-        <div className="stack">
-          <TrendCard data={data} range={range} setRange={setRange} />
-          <AlertList patientId={patientId} canAck={canAck} />
-        </div>
-        <div className="stack">
-          <AssessmentCard latest={data?.latest ?? null} />
-          {side}
-        </div>
+        <AlertList patientId={patientId} canAck={canAck} />
+        {side && <div className="stack">{side}</div>}
       </div>
       <span className="sr-only">{patientName}</span>
     </>

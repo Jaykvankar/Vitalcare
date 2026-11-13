@@ -19,7 +19,7 @@ frontend/coverage/
 .coverage
 htmlcov/
 
-# AI assistant / agent files (never committed)
+# Local editor and tool settings (never committed)
 .claude/
 CLAUDE.md
 CLAUDE.local.md
@@ -34,3 +34,14 @@ AGENTS.md
 .codeium/
 .github/copilot-instructions.md
 demo-backup-*/
+.claudeignore
+.gemini/
+GEMINI.md
+.codex/
+codex.md
+.github/instructions/
+.junie/
+.roo/
+.clinerules
+.tabnine/
+.kiro/

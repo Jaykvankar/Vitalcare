@@ -465,6 +465,7 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 0.82re
 .side-user:hover { background: var(--side-bg-2); border-radius: 8px; }
 
 /* connect-a-device wizard, device status, device guide (built on the tokens above) */
+.vital.unmeasured .value.not-measured { font-family: var(--font); font-size: 1rem; color: var(--faint); font-weight: 500; letter-spacing: 0; margin-top: 14px; }
 .tag.warn { color: var(--warning); background: var(--warning-bg); border-color: transparent; }
 .device-list .info .tag { font-size: 0.7rem; color: var(--muted); }
 .device-list .info .tag.ok { color: var(--normal); }

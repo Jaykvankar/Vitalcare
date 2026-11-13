@@ -129,7 +129,11 @@ def _downsample(points: list[dict]) -> list[dict]:
     keys = ("hr", "spo2", "sbp", "dbp", "temp", "rr", "risk")
     for i in range(MAX_POINTS):
         chunk = points[int(i * size):int((i + 1) * size)] or [points[-1]]
-        avg = {k: round(sum(c[k] for c in chunk) / len(chunk), 2) for k in keys}
+        avg = {}
+        for k in keys:  # partial readings: average only the values that were measured
+            vals = [c[k] for c in chunk if c.get(k) is not None]
+            if vals:
+                avg[k] = round(sum(vals) / len(vals), 2)
         worst = min(chunk, key=lambda c: BAND_ORDER[c["band"]])
         out.append({"ts": chunk[-1]["ts"], **avg, "band": worst["band"], "reasons": worst["reasons"]})
     return out

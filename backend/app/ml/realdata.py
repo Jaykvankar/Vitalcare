@@ -4,13 +4,13 @@ MIMIC-III Clinical Database Demo v1.4 (ODbL): 100 de-identified ICU patients.
     Charted vitals are aggregated to hourly medians per ICU stay, forward-filled up to 4 h.
     Gives all six vitals plus the in-hospital outcome.
 BIDMC PPG and Respiration Dataset v1.0.0 (ODC-BY): 53 ICU recordings, 8 min each, 1 Hz.
-    Has HR, SpO2 and RR only. Blood pressure and temperature were not recorded; replay holds them
-    at fixed normal values and marks them as not measured.
+    Has HR, SpO2 and RR only. Blood pressure and temperature were not recorded: replay leaves them
+    out (shown as not measured); the evaluation holds them at fixed normal values.
 
 eICU Collaborative Research Database Demo v2.0.1 (ODbL): 2,520 ICU stays from 186 US hospitals.
     5-minute vital signs (vitalPeriodic) plus cuff blood pressure (vitalAperiodic); hospital outcome
     and hospital characteristics. Temperature is rarely charted in these tables (167 stays); when it
-    is missing it is held at a fixed normal value and flagged.
+    is missing, live replay leaves it out and the evaluation holds it at a fixed normal value.
 
 Dates in MIMIC are shifted for de-identification; only relative times are used.
 """
@@ -121,8 +121,12 @@ def load_mimic() -> dict:
     return build_mimic_cache()
 
 
-def load_bidmc(n: int, step_s: int = 5) -> list[dict]:
-    """One BIDMC record as `step_s`-second medians; BP and temperature held fixed (not recorded)."""
+def load_bidmc(n: int, step_s: int = 5, fill_missing: bool = True) -> list[dict]:
+    """One BIDMC record as `step_s`-second medians.
+
+    BP and temperature were not recorded. fill_missing=True (evaluation) holds them at fixed normal
+    values; fill_missing=False (live replay) leaves them out, so the app shows them as not measured.
+    """
     path = BIDMC_DIR / f"bidmc_{n:02d}_Numerics.csv"
     rows: dict[int, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     with open(path, newline="") as f:
@@ -143,7 +147,7 @@ def load_bidmc(n: int, step_s: int = 5) -> list[dict]:
         vals = rows[b]
         if all(k in vals for k in ("hr", "rr", "spo2")):
             out.append({"t_s": b * step_s, **{k: round(statistics.median(v), 1) for k, v in vals.items()},
-                        **BIDMC_FIXED})
+                        **(BIDMC_FIXED if fill_missing else {})})
     return out
 
 
@@ -296,8 +300,15 @@ def load_eicu_rows() -> dict[str, list[list[float]]]:
 EICU_FIELDS = ("t_min", "hr", "spo2", "sbp", "dbp", "temp", "rr", "temp_measured")
 
 
-def eicu_rows_as_dicts(rows: list[list[float]]) -> list[dict]:
-    return [dict(zip(EICU_FIELDS, r, strict=True)) for r in rows]
+def eicu_rows_as_dicts(rows: list[list[float]], drop_unmeasured: bool = False) -> list[dict]:
+    """drop_unmeasured=True (live replay) leaves out temperature where it was never charted
+    instead of the fixed 36.9 C that the evaluation uses."""
+    out = [dict(zip(EICU_FIELDS, r, strict=True)) for r in rows]
+    if drop_unmeasured:
+        for d in out:
+            if not d["temp_measured"]:
+                del d["temp"]
+    return out
 
 
 class ReplayStream:
@@ -312,7 +323,7 @@ class ReplayStream:
     def step(self) -> tuple[dict, int, str]:
         r = self.rows[self.i % len(self.rows)]
         self.i += 1
-        return {k: r[k] for k in VITALS}, 0, self.source
+        return {k: r[k] for k in VITALS if r.get(k) is not None}, 0, self.source
 
 
 def replay_sources() -> list[dict]:
@@ -328,14 +339,14 @@ def replay_sources() -> list[dict]:
         meta = load_eicu_meta()
         ranked = sorted(meta.items(), key=lambda kv: (not kv[1]["died_in_hospital"], -kv[1]["rows"]))[:40]
         for stay, s in ranked:
-            temp = "temperature measured" if s["temp_measured"] else "temperature not recorded (held fixed)"
+            temp = "temperature measured" if s["temp_measured"] else "temperature not recorded (shown as not measured)"
             out.append({"id": f"eicu:{stay}", "label": f"eICU stay {stay} · hospital {s['hospital_id']}",
                         "detail": f"{s['rows']} five-minute rows, {s['hospital_region']} {s['hospital_beds']} beds; "
                                   f"{temp}" + ("; patient died in hospital" if s["died_in_hospital"] else "")})
     if available()["bidmc"]:
         for n in bidmc_records():
             out.append({"id": f"bidmc:{n}", "label": f"BIDMC record {n:02d}",
-                        "detail": "8 min at 1 Hz; HR, SpO2, RR real; BP and temperature not recorded (held fixed)"})
+                        "detail": "8 min at 1 Hz; HR, SpO2, RR real; BP and temperature not recorded (shown as not measured)"})
     return out
 
 
@@ -344,8 +355,8 @@ def stream_for_source(source: str, start: int = 0) -> ReplayStream | None:
         stay = load_mimic().get(source.split(":", 1)[1])
         return ReplayStream(stay["rows"], source, start) if stay else None
     if source.startswith("bidmc:"):
-        return ReplayStream(load_bidmc(int(source.split(":", 1)[1])), source, start)
+        return ReplayStream(load_bidmc(int(source.split(":", 1)[1]), fill_missing=False), source, start)
     if source.startswith("eicu:") and eicu_available():
         rows = load_eicu_rows().get(source.split(":", 1)[1])
-        return ReplayStream(eicu_rows_as_dicts(rows), source, start) if rows else None
+        return ReplayStream(eicu_rows_as_dicts(rows, drop_unmeasured=True), source, start) if rows else None
     return None

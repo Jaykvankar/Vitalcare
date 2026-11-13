@@ -26,24 +26,51 @@ RULES = [
 
 
 def evaluate_rules(v: dict) -> list[tuple[str, str]]:
-    """Return [(reason_code, severity)], highest severity per code."""
+    """Return [(reason_code, severity)], highest severity per code. Rules for vitals that were
+    not measured in this reading are skipped."""
     found: dict[str, str] = {}
     for code, sev, pred in RULES:
-        if code not in found and pred(v):
+        if code in found:
+            continue
+        try:
+            hit = pred(v)
+        except (KeyError, TypeError):
+            continue
+        if hit:
             found[code] = sev
     return sorted(found.items())
 
 
+NEWS2_INPUTS = ("rr", "spo2", "sbp", "hr", "temp")
+
+
 def news2(v: dict) -> int:
-    """NEWS2 subscores for the vitals we measure (no O2 supplement / consciousness inputs)."""
-    rr, spo2, sbp, hr, t = v["rr"], v["spo2"], v["sbp"], v["hr"], v["temp"]
+    """NEWS2 subscores for the vitals we measure (no O2 supplement / consciousness inputs).
+    Vitals missing from a partial reading add nothing, so a partial score is a lower bound."""
+    def has(k: str) -> bool:
+        return v.get(k) is not None
+
     s = 0
-    s += 3 if rr <= 8 else 1 if rr <= 11 else 0 if rr <= 20 else 2 if rr <= 24 else 3
-    s += 3 if spo2 <= 91 else 2 if spo2 <= 93 else 1 if spo2 <= 95 else 0
-    s += 3 if sbp <= 90 else 2 if sbp <= 100 else 1 if sbp <= 110 else 0 if sbp < 220 else 3
-    s += 3 if hr <= 40 else 1 if hr <= 50 else 0 if hr <= 90 else 1 if hr <= 110 else 2 if hr <= 130 else 3
-    s += 3 if t <= 35.0 else 1 if t <= 36.0 else 0 if t <= 38.0 else 1 if t <= 39.0 else 2
+    if has("rr"):
+        rr = v["rr"]
+        s += 3 if rr <= 8 else 1 if rr <= 11 else 0 if rr <= 20 else 2 if rr <= 24 else 3
+    if has("spo2"):
+        spo2 = v["spo2"]
+        s += 3 if spo2 <= 91 else 2 if spo2 <= 93 else 1 if spo2 <= 95 else 0
+    if has("sbp"):
+        sbp = v["sbp"]
+        s += 3 if sbp <= 90 else 2 if sbp <= 100 else 1 if sbp <= 110 else 0 if sbp < 220 else 3
+    if has("hr"):
+        hr = v["hr"]
+        s += 3 if hr <= 40 else 1 if hr <= 50 else 0 if hr <= 90 else 1 if hr <= 110 else 2 if hr <= 130 else 3
+    if has("temp"):
+        t = v["temp"]
+        s += 3 if t <= 35.0 else 1 if t <= 36.0 else 0 if t <= 38.0 else 1 if t <= 39.0 else 2
     return s
+
+
+def news2_inputs_present(v: dict) -> int:
+    return sum(v.get(k) is not None for k in NEWS2_INPUTS)
 
 
 # Physiologically plausible input ranges: anything outside is rejected at ingest.
@@ -54,15 +81,28 @@ PLAUSIBLE = {
 
 
 def validate(v: dict) -> dict:
+    """Check a reading. Any subset of the six vitals is allowed (real sensors measure only some),
+    but at least one must be present, values must be plausible, and blood pressure comes as a pair."""
+    if not isinstance(v, dict):
+        raise ValueError("reading must be an object")
+    unknown = [k for k in v if k not in VITALS]
+    if unknown:
+        raise ValueError(f"unknown field(s): {', '.join(sorted(unknown))}")
     out = {}
     for k in VITALS:
-        if k not in v:
-            raise ValueError(f"missing vital {k}")
+        if v.get(k) is None or (isinstance(v[k], str) and not v[k].strip()):
+            continue  # not measured (missing key, null, or an empty CSV cell)
         x = float(v[k])
+        if x != x:
+            raise ValueError(f"{k} is not a number")
         lo, hi = PLAUSIBLE[k]
         if not lo <= x <= hi:
             raise ValueError(f"{k}={x} outside plausible range")
         out[k] = round(x, 2)
-    if out["dbp"] >= out["sbp"]:
+    if not out:
+        raise ValueError("no vital signs in reading")
+    if ("sbp" in out) != ("dbp" in out):
+        raise ValueError("blood pressure needs both systolic and diastolic")
+    if "sbp" in out and out["dbp"] >= out["sbp"]:
         raise ValueError("diastolic must be below systolic")
     return out

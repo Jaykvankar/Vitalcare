@@ -429,7 +429,7 @@ function Simulator() {
       </Head>
       <div className="card pad">
         <div className="row"><Icon.Database size={18} /><h2>eICU Collaborative Research Database Demo</h2><span className="spacer" />{src?.available.eicu ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>
-        <p className="muted small" style={{ marginTop: 8 }}>2,520 real ICU stays from 186 US hospitals (PhysioNet, ODbL), heart rate, SpO₂, breathing rate and blood pressure every 5 minutes. Temperature is rarely charted here and is held fixed when missing. Replayed one 5-minute row per tick.</p>
+        <p className="muted small" style={{ marginTop: 8 }}>2,520 real ICU stays from 186 US hospitals (PhysioNet, ODbL), heart rate, SpO₂, breathing rate and blood pressure every 5 minutes. Temperature is rarely charted here; when it is missing it shows as not measured. Replayed one 5-minute row per tick.</p>
       </div>
       <div className="grid two">
         <div className="card pad">
@@ -438,7 +438,7 @@ function Simulator() {
         </div>
         <div className="card pad">
           <div className="row"><Icon.Database size={18} /><h2>BIDMC PPG & Respiration</h2><span className="spacer" />{src?.available.bidmc ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>
-          <p className="muted small" style={{ marginTop: 8 }}>53 real ICU recordings at 1 Hz (PhysioNet, ODC-BY). Heart rate, SpO₂ and respiration only; blood pressure and temperature are held fixed.</p>
+          <p className="muted small" style={{ marginTop: 8 }}>53 real ICU recordings at 1 Hz (PhysioNet, ODC-BY). Heart rate, SpO₂ and respiration only; blood pressure and temperature show as not measured.</p>
         </div>
       </div>
       {flash && <div className={`notice ${flash.ok ? "success" : "error"}`}>{flash.text}</div>}

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..ml import infer
 from ..ml.features import new_state
-from ..ml.rules import validate
+from ..ml.rules import news2_inputs_present, validate
 from ..models import Alert, Device, Patient, Reading
 from ..security import audit, crypto, sealing, server_keys, signatures
 from ..security.hashing import b64d, canonical
@@ -115,7 +115,7 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
     result = infer.score(vitals, state)
 
     # 6. Encrypt and store. Only band / score / reason codes are in the clear.
-    payload = {**vitals, "news2": result.news2}
+    payload = {**vitals, "news2": result.news2, "news2_inputs": news2_inputs_present(vitals)}
     r_nonce, r_ct = crypto.encrypt_reading(
         dek, payload, patient_id=patient.id, device_id=device.id, seq=pkt.seq, ts=pkt.ts
     )
@@ -129,6 +129,7 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
         patient.last_band, patient.last_score, patient.last_reading_at = result.band, result.risk, when
     device.last_seen = when
     rollups.add(db, patient_id=patient.id, dek=dek, ts=pkt.ts, values={**vitals, "risk": result.risk}, band=result.band)
+    # (partial readings: missing vitals and a missing AI score are simply absent from every stored copy)
     upsert_alerts(db, patient.id, result.reasons, when)
     db.commit()
     del plaintext, vitals, payload, dek  # drop plaintext references promptly

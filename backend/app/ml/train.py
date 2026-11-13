@@ -37,6 +37,7 @@ def simulate(n_patients: int, days: float, seed: int, episode_rate: float = 0.00
         for _ in range(int(days * STEPS_PER_DAY)):
             v, label, kind = stream.step()
             feats, state = features_and_update(v, state)
+            assert feats is not None  # synthetic readings always contain all six vitals
             rows.append(feats)
             labels.append(label)
             kinds.append(kind)

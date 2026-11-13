@@ -88,23 +88,34 @@ function VitalCards({ latest, points }: { latest: Point | null; points: Point[] 
       {CARDS.map((c) => {
         const raw = latest[c.key] as number | undefined;
         const I = Icon[c.icon];
-        const value = c.key === "sbp" ? `${Math.round(latest.sbp)}/${Math.round(latest.dbp)}` : raw === undefined ? "–" : c.fmt ? c.fmt(raw) : Math.round(raw);
+        const measured = c.key === "sbp" ? latest.sbp != null && latest.dbp != null : raw != null;
+        const value = !measured ? null
+          : c.key === "sbp" ? `${Math.round(latest.sbp!)}/${Math.round(latest.dbp!)}`
+          : c.fmt ? c.fmt(raw!) : Math.round(raw!);
         const hit = reasons.find((r) => r.startsWith(c.flag));
         const sev = hit ? (latest.band === "critical" && !hit.includes("MEDIUM") ? "critical" : "warning") : "";
         const ref = median(recent.map((p) => p[c.key] as number).filter((x) => typeof x === "number"));
         return (
-          <div key={c.key} className={`card vital ${sev}`}>
+          <div key={c.key} className={`card vital ${sev} ${measured ? "" : "unmeasured"}`}>
             <span className="flag" />
             <div className="top">
               {c.label}
               <I size={16} />
             </div>
-            <div className="value">
-              {value}
-              <span className="unit">{c.unit}</span>
-            </div>
+            {measured ? (
+              <div className="value">
+                {value}
+                <span className="unit">{c.unit}</span>
+              </div>
+            ) : (
+              <div className="value not-measured">Not measured</div>
+            )}
             <div className="ref">
-              {hit ? REASON_LABELS[hit] ?? hit : Number.isFinite(ref) ? `Recent median ${c.fmt ? c.fmt(ref) : Math.round(ref)} ${c.unit}` : " "}
+              {!measured
+                ? (Number.isFinite(ref) ? `Last known median ${c.fmt ? c.fmt(ref) : Math.round(ref)} ${c.unit}` : "This device does not measure it")
+                : hit ? REASON_LABELS[hit] ?? hit
+                : c.key === "news2" && (latest.news2_inputs ?? 5) < 5 ? `Partial: ${latest.news2_inputs} of 5 measurements`
+                : Number.isFinite(ref) ? `Recent median ${c.fmt ? c.fmt(ref) : Math.round(ref)} ${c.unit}` : " "}
             </div>
             {c.key !== "news2" && recent.length > 2 && <Spark data={recent} k={c.key} color={c.color} />}
           </div>
@@ -193,7 +204,8 @@ function AssessmentCard({ latest }: { latest: Point | null }) {
   if (!latest) return null;
   const verdict = latest.band === "critical" ? "Urgent review suggested" : latest.band === "warning" ? "Needs attention" : "Within expected range";
   const reasons = latest.reasons.filter((r) => r !== "ML_RISK");
-  const risk = Math.round(latest.risk * 100);
+  const risk = latest.risk == null ? null : Math.round(latest.risk * 100);
+  const partialNews = (latest.news2_inputs ?? 5) < 5;
   return (
     <div className="card pad assess">
       <div className="row">
@@ -206,16 +218,18 @@ function AssessmentCard({ latest }: { latest: Point | null }) {
         {reasons.length === 0 && <li>Latest readings are close to this patient's own recent baseline.</li>}
         {reasons.map((r) => <li key={r}>{REASON_LABELS[r] ?? r}</li>)}
         {latest.reasons.includes("ML_RISK") && <li>The model sees a deterioration-like trend across several vitals.</li>}
+        {risk == null && <li>This reading does not include all six vitals, so the AI model did not score it. Clinical rules and NEWS2 still check what was measured.</li>}
         <li className="muted">Decision support only. No diagnostic conclusion is made.</li>
       </ul>
       <div className="kpis">
         <div className="kpi">
           <div className="label">Model risk</div>
-          <div className="num">{risk}%</div>
-          <div className={`meter ${risk >= 60 ? "critical" : risk >= 30 ? "warning" : ""}`}><i style={{ width: `${risk}%` }} /></div>
+          <div className="num">{risk == null ? "–" : `${risk}%`}</div>
+          {risk == null ? <div className="xs muted">Needs all six vitals</div>
+            : <div className={`meter ${risk >= 60 ? "critical" : risk >= 30 ? "warning" : ""}`}><i style={{ width: `${risk}%` }} /></div>}
         </div>
         <div className="kpi">
-          <div className="label">NEWS2</div>
+          <div className="label">NEWS2{partialNews ? " (partial)" : ""}</div>
           <div className="num">{latest.news2 ?? "–"}</div>
           <div className={`meter ${(latest.news2 ?? 0) >= 7 ? "critical" : (latest.news2 ?? 0) >= 5 ? "warning" : ""}`}><i style={{ width: `${Math.min(100, ((latest.news2 ?? 0) / 15) * 100)}%` }} /></div>
         </div>

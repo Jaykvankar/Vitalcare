@@ -24,7 +24,7 @@ def _aad(patient_id: int, bucket_ts: int) -> bytes:
 
 
 def _empty() -> dict:
-    return {"n": 0, "sum": {k: 0.0 for k in KEYS}, "min": {}, "max": {}}
+    return {"n": 0, "sum": {}, "min": {}, "max": {}, "count": {}}
 
 
 def decrypt(dek: bytes, r: ReadingRollup) -> dict:
@@ -40,16 +40,21 @@ def _encrypt(dek: bytes, patient_id: int, bucket_ts: int, data: dict) -> bytes:
 
 
 def add(db: Session, *, patient_id: int, dek: bytes, ts: int, values: dict, band: str) -> None:
-    """Fold one reading into its bucket. Retries if another writer created the bucket first."""
+    """Fold one reading into its bucket. Missing vitals (partial readings) are skipped per key.
+    Retries if another writer created the bucket first."""
     bucket = ts - ts % BUCKET_S
     for _ in range(3):
         row = db.execute(select(ReadingRollup).where(ReadingRollup.patient_id == patient_id,
                                                      ReadingRollup.bucket_ts == bucket)).scalar_one_or_none()
         data = decrypt(dek, row) if row else _empty()
+        counts = data.setdefault("count", {k: data["n"] for k in KEYS if k in data["min"]})
         data["n"] += 1
         for k in KEYS:
+            if values.get(k) is None:
+                continue
             v = float(values[k])
-            data["sum"][k] += v
+            data["sum"][k] = data["sum"].get(k, 0.0) + v
+            counts[k] = counts.get(k, 0) + 1
             data["min"][k] = min(v, data["min"].get(k, v))
             data["max"][k] = max(v, data["max"].get(k, v))
         blob = _encrypt(dek, patient_id, bucket, data)
@@ -74,7 +79,8 @@ def series(db: Session, *, patient_id: int, dek: bytes, since: int) -> list[dict
     out = []
     for r in rows:
         d = decrypt(dek, r)
-        n = max(1, d["n"])
-        out.append({"ts": r.bucket_ts + BUCKET_S // 2, "n": d["n"],
-                    **{k: round(d["sum"][k] / n, 2) for k in KEYS}, "band": r.worst_band, "reasons": []})
+        # Older summaries have no per-vital counts: every vital was present in every reading then.
+        counts = d.get("count") or {k: d["n"] for k in KEYS if k in d["min"]}
+        means = {k: round(d["sum"][k] / counts[k], 2) for k in KEYS if counts.get(k)}
+        out.append({"ts": r.bucket_ts + BUCKET_S // 2, "n": d["n"], **means, "band": r.worst_band, "reasons": []})
     return out

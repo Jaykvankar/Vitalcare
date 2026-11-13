@@ -1,5 +1,6 @@
 """Tests for hardening, onboarding and clinical-workflow features."""
 import hashlib
+import time
 from datetime import UTC, datetime, timedelta
 
 import pyotp
@@ -252,8 +253,9 @@ def test_demo_code_only_in_demo_mode_for_seeded_accounts_after_password(world):
         db.close()
         r = c.get("/api/auth/demo-code")
         assert r.status_code == 200
-        expected = pyotp.TOTP(world["totp"]["clin2"], digest=hashlib.sha512).now()
-        assert r.json()["code"] == expected and 0 < r.json()["seconds_left"] <= 30
+        totp = pyotp.TOTP(world["totp"]["clin2"], digest=hashlib.sha512)
+        now = time.time()  # accept the neighbouring 30 s step in case the clock ticked between calls
+        assert r.json()["code"] in {totp.at(now), totp.at(now - 30)} and 0 < r.json()["seconds_left"] <= 30
         reset_totp_guard()
         assert c.post("/api/auth/mfa", json={"code": r.json()["code"]}).status_code == 200
         assert c.get("/api/auth/demo-code").status_code == 404       # nothing to show once signed in

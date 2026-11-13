@@ -65,7 +65,10 @@ def test_eicu_loader_builds_5_minute_rows(tmp_path, monkeypatch):
 
     stream = realdata.stream_for_source("eicu:1001")
     vitals, label, kind = stream.step()
-    assert vitals == {"hr": 90.0, "spo2": 95.0, "sbp": 140.0, "dbp": 85.0, "temp": 36.9, "rr": 18.0}
+    # live replay leaves out temperature that was never charted (the evaluation uses 36.9 instead)
+    assert vitals == {"hr": 90.0, "spo2": 95.0, "sbp": 140.0, "dbp": 85.0, "rr": 18.0}
+    stream.step()
+    assert stream.step()[0]["temp"] == 37.8               # third row: temperature was charted
     assert kind == "eicu:1001"
     assert realdata.stream_for_source("eicu:9999") is None
     realdata._eicu_rows_cached.cache_clear()
@@ -84,7 +87,10 @@ def test_device_client_reads_sensor_json_lines(env):
     dc = _device_client()
     ok = dc.parse_vitals_line('{"hr": 78, "spo2": 97, "sbp": 122, "dbp": 79, "temp": 36.8, "rr": 15}')
     assert ok == {"hr": 78.0, "spo2": 97.0, "sbp": 122.0, "dbp": 79.0, "temp": 36.8, "rr": 15.0}
-    assert dc.parse_vitals_line('{"hr": 78}') is None          # missing values
+    assert dc.parse_vitals_line('{"hr": 78}') == {"hr": 78.0}             # partial readings are fine
+    assert dc.parse_vitals_line('{"sbp": 120}') is None                    # blood pressure needs both values
+    assert dc.parse_vitals_line('{"hr": "fast"}') is None                  # not a number
+    assert dc.parse_vitals_line('{}') is None                              # nothing measured
     assert dc.parse_vitals_line("not json") is None
     assert dc.parse_vitals_line("# comment") is None
     assert dc.verify_arg("https://vitalcare.example.org", None) is True       # real hospital: system CAs

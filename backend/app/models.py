@@ -143,7 +143,7 @@ class Reading(Base):
     nonce: Mapped[bytes] = mapped_column(LargeBinary)
     ciphertext: Mapped[bytes] = mapped_column(LargeBinary)  # AES-256-GCM(vitals JSON) under patient DEK
     band: Mapped[str] = mapped_column(String(16))  # normal | warning | critical
-    risk_score: Mapped[float] = mapped_column(Float)
+    risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # None: partial reading, no model score
     reason_codes: Mapped[str] = mapped_column(String(256), default="")
 
 

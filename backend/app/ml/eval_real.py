@@ -37,6 +37,7 @@ def run_sequence(rows: list[dict], model) -> dict:
     for r in rows:
         v = {k: r[k] for k in ("hr", "spo2", "sbp", "dbp", "temp", "rr")}
         f, state = features_and_update(v, state)
+        assert f is not None  # evaluation rows always contain all six vitals
         feats.append(f)
         n2.append(news2(v))
         rules.append(evaluate_rules(v))

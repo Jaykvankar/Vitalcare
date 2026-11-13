@@ -99,18 +99,27 @@ def parse_pairing_link(link: str) -> tuple[str, str, str]:
 
 
 def parse_vitals_line(line: str) -> dict | None:
-    """One JSON object per line from a sensor program, e.g.
-    {"hr": 78, "spo2": 97, "sbp": 122, "dbp": 79, "temp": 36.8, "rr": 15}
-    Returns None (and the line is skipped) when a value is missing or not a number.
+    """One JSON object per line from a sensor program. Any subset of the six vitals is fine
+    (a heart-rate strap sends only "hr"), for example:
+        {"hr": 78, "spo2": 97}
+        {"hr": 78, "spo2": 97, "sbp": 122, "dbp": 79, "temp": 36.8, "rr": 15}
+    Returns None (the line is skipped) when it has no vitals or a value is not a number.
+    Blood pressure must come as a pair; the server checks plausible ranges.
     """
     line = line.strip()
     if not line or line.startswith("#"):
         return None
     try:
         obj = json.loads(line)
-        return {k: float(obj[k]) for k in VITAL_KEYS}
+        if not isinstance(obj, dict):
+            raise TypeError
+        vitals = {k: float(obj[k]) for k in VITAL_KEYS if obj.get(k) is not None}
+        if not vitals or ("sbp" in vitals) != ("dbp" in vitals):
+            raise ValueError
+        return vitals
     except (ValueError, KeyError, TypeError):
-        print(f"skipped (need numeric {', '.join(VITAL_KEYS)}): {line[:80]}", file=sys.stderr)
+        print(f"skipped (need numbers for one or more of {', '.join(VITAL_KEYS)}; sbp and dbp together): {line[:80]}",
+              file=sys.stderr)
         return None
 
 

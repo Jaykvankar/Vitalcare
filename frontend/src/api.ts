@@ -50,17 +50,19 @@ export function saveFile(name: string, content: string, type = "application/json
   URL.revokeObjectURL(a.href);
 }
 
+/** One reading. Real sensors may measure only some vitals, so each one can be missing. */
 export interface Point {
   ts: number;
-  hr: number;
-  spo2: number;
-  sbp: number;
-  dbp: number;
-  temp: number;
-  rr: number;
+  hr?: number;
+  spo2?: number;
+  sbp?: number;
+  dbp?: number;
+  temp?: number;
+  rr?: number;
   news2?: number;
+  news2_inputs?: number; // how many of the 5 NEWS2 inputs were measured (5 = complete)
   band: Exclude<Band, null>;
-  risk: number;
+  risk: number | null;   // AI model probability; null when the reading lacks some vitals
   reasons: string[];
 }
 
@@ -103,7 +105,7 @@ export function sourceInfo(source: string | undefined): { kind: "real" | "synthe
   if (source.startsWith("mimic:"))
     return { kind: "real", label: "Real data replay", detail: `MIMIC-III ICU stay ${source.split(":")[1]} (de-identified)` };
   if (source.startsWith("eicu:"))
-    return { kind: "real", label: "Real data replay", detail: `eICU ICU stay ${source.split(":")[1]} (de-identified, 5-minute vitals; temperature shows 36.9 °C when it was not charted)` };
+    return { kind: "real", label: "Real data replay", detail: `eICU ICU stay ${source.split(":")[1]} (de-identified, 5-minute vitals; temperature only where it was charted)` };
   if (source.startsWith("bidmc:"))
     return { kind: "real", label: "Real data replay", detail: `BIDMC record ${source.split(":")[1]} · HR/SpO₂/RR real, BP/temp not recorded` };
   return { kind: "synthetic", label: "Synthetic data", detail: "Generated vital signs" };

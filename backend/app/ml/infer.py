@@ -39,11 +39,11 @@ def load_model():
         return _model
 
 
-def band_for(reasons: list[tuple[str, str]], prob: float, news: int) -> tuple[str, list[tuple[str, str]]]:
+def band_for(reasons: list[tuple[str, str]], prob: float | None, news: int) -> tuple[str, list[tuple[str, str]]]:
     """Combine rules, NEWS2 and model. The model can raise the band but never lower a rule."""
     reasons = list(reasons)
     severities = {s for _, s in reasons}
-    if prob >= ML_THRESHOLD:
+    if prob is not None and prob >= ML_THRESHOLD:
         reasons.append(("ML_RISK", "warning"))
     if news >= 7:
         reasons.append(("NEWS2_HIGH", "critical"))
@@ -60,15 +60,16 @@ def band_for(reasons: list[tuple[str, str]], prob: float, news: int) -> tuple[st
 @dataclass
 class Score:
     band: str
-    risk: float          # model probability 0..1
+    risk: float | None   # model probability 0..1; None when the reading lacks some vitals
     news2: int
     reasons: list[tuple[str, str]]
     state: dict          # updated baseline state (caller re-encrypts it)
 
 
 def score(vitals: dict, state: dict) -> Score:
+    """Rules and NEWS2 use whatever was measured; the model scores only complete readings."""
     feats, new_state = features_and_update(vitals, state)
-    prob = float(load_model().predict_proba(np.array([feats]))[0, 1])
+    prob = None if feats is None else float(load_model().predict_proba(np.array([feats]))[0, 1])
     n = news2(vitals)
     band, reasons = band_for(evaluate_rules(vitals), prob, n)
-    return Score(band=band, risk=round(prob, 4), news2=n, reasons=reasons, state=new_state)
+    return Score(band=band, risk=None if prob is None else round(prob, 4), news2=n, reasons=reasons, state=new_state)

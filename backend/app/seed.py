@@ -189,11 +189,15 @@ def main() -> None:
     out = Path(os.environ.get("RPM_SEED_CREDENTIALS", PROJECT_DIR / "seed_credentials.txt"))
     lines = ["# Demo credentials (gitignored). TOTP uses SHA-512, 6 digits, 30 s.",
              "# Add the secret to Aegis / 2FAS / FreeOTP with algorithm SHA512, or run:",
-             "#   .venv\\Scripts\\python scripts\\totp_code.py <username>", ""]
+             "#   .venv\\Scripts\\python scripts\\totp_code.py <username>",
+             "# Copy a password by selecting its whole line (triple-click). It has no spaces.", ""]
     for username, role, pw, totp_secret in creds:
-        lines.append(f"{username:10} {role:9} password={pw}" + (f"  totp_secret={totp_secret}" if totp_secret else ""))
+        lines += [f"== {username} ({role})", "username:", username, "password:", pw]
+        if totp_secret:
+            lines += ["totp secret:", totp_secret]
         if username in recovery:
-            lines.append(f"{'':10} recovery codes: {' '.join(recovery[username])}")
+            lines += ["recovery codes:", " ".join(recovery[username])]
+        lines.append("")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Seeded {len(PEOPLE)} users. Database: {db_path}. Credentials written to {out}")
 

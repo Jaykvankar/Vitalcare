@@ -6,11 +6,18 @@ import { Page, expect } from "@playwright/test";
 const CREDS = resolve(process.cwd(), "../.e2e/credentials.txt");
 
 export function credentials(username: string): { password: string; totp?: string } {
-  const line = readFileSync(CREDS, "utf8").split(/\r?\n/).find((l) => l.startsWith(username + " "));
-  if (!line) throw new Error(`no seeded credentials for ${username}`);
-  const password = line.match(/password=(\S+)/)![1];
-  const totp = line.match(/totp_secret=(\S+)/)?.[1];
-  return { password, totp };
+  const lines = readFileSync(CREDS, "utf8").split(/\r?\n/);
+  const start = lines.findIndex((l) => l.startsWith(`== ${username} (`));
+  if (start < 0) throw new Error(`no seeded credentials for ${username}`);
+  const end = lines.findIndex((l, i) => i > start && !l.trim());
+  const block = lines.slice(start + 1, end < 0 ? undefined : end);
+  const value = (label: string) => {
+    const i = block.indexOf(`${label}:`);
+    return i >= 0 ? block[i + 1]?.trim() : undefined;
+  };
+  const password = value("password");
+  if (!password) throw new Error(`no password for ${username}`);
+  return { password, totp: value("totp secret") };
 }
 
 function base32(s: string): Buffer {

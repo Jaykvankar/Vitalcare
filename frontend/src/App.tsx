@@ -13,6 +13,7 @@ const PatientDetail = lazy(() => import("./pages/PatientDetail"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Account = lazy(() => import("./pages/Account"));
 const DeviceGuide = lazy(() => import("./pages/DeviceGuide"));
+const SecurityInspector = lazy(() => import("./pages/SecurityInspector"));
 
 interface AuthCtx {
   me: Me | null;
@@ -54,6 +55,7 @@ export default function App() {
             {me.role === "admin" && <Route path="/admin/*" element={<Admin />} />}
             <Route path="/account" element={<Account />} />
             <Route path="/devices/guide" element={<DeviceGuide />} />
+            {me.role !== "patient" && <Route path="/security/inspector" element={<SecurityInspector />} />}
             <Route path="*" element={<Navigate to={homeFor(me)} replace />} />
           </Routes>
           </Suspense>
@@ -75,6 +77,7 @@ const NAV: Record<string, { to: string; label: string; icon: keyof typeof Icon }
   clinician: [
     { to: "/worklist", label: "Patient worklist", icon: "Grid" },
     { to: "/devices/guide", label: "Device guide", icon: "Watch" },
+    { to: "/security/inspector", label: "Security inspector", icon: "Shield" },
   ],
   admin: [
     { to: "/admin/users", label: "People", icon: "Users" },
@@ -82,6 +85,7 @@ const NAV: Record<string, { to: string; label: string; icon: keyof typeof Icon }
     { to: "/admin/assignments", label: "Care teams", icon: "Link" },
     { to: "/admin/devices", label: "Devices & pairing", icon: "Watch" },
     { to: "/devices/guide", label: "Device guide", icon: "Inbox" },
+    { to: "/security/inspector", label: "Security inspector", icon: "Lock" },
     { to: "/admin/simulator", label: "Data sources", icon: "Play" },
     { to: "/admin/audit", label: "Privacy ledger", icon: "Ledger" },
     { to: "/admin/security", label: "Keys & algorithms", icon: "Shield" },
@@ -92,7 +96,7 @@ const CRUMB: Record<string, string> = {
   "/me": "My health", "/worklist": "Patient worklist", "/admin/users": "People", "/admin/assignments": "Care teams",
   "/admin/devices": "Devices & pairing", "/admin/simulator": "Data sources", "/admin/audit": "Privacy ledger",
   "/admin/security": "Keys & algorithms", "/admin/import": "Bulk import", "/account": "Sign-in & security",
-  "/devices/guide": "Device guide",
+  "/devices/guide": "Device guide", "/security/inspector": "Security inspector",
 };
 
 function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setTheme: (t: Theme) => void; children: React.ReactNode }) {

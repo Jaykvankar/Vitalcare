@@ -22,7 +22,7 @@ from ..ml import infer
 from ..ml.features import new_state
 from ..ml.rules import news2_inputs_present, validate
 from ..models import Alert, Device, Patient, Reading
-from ..security import audit, crypto, sealing, server_keys, signatures
+from ..security import audit, crypto, inspector, sealing, server_keys, signatures
 from ..security.hashing import b64d, canonical
 from . import rollups
 
@@ -69,7 +69,8 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
 
     # 1. Authenticity: RSA signature over the SHA-512 digest of the whole packet.
     pub = signatures.load_rsa_public(device.public_key_pem)
-    if not signatures.rsa_verify_digest(pub, signed_message(pkt.device_id, pkt.seq, pkt.ts, epk, nonce, ct), sig):
+    signed = signed_message(pkt.device_id, pkt.seq, pkt.ts, epk, nonce, ct)
+    if not signatures.rsa_verify_digest(pub, signed, sig):
         raise _reject(401, "bad signature", pkt.device_id)
 
     # 2. Freshness: timestamp window (now=None means live traffic; seeding passes historical times).
@@ -78,6 +79,7 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
         raise _reject(400, "timestamp outside allowed window", pkt.device_id)
 
     # 3. Anti-replay: sequence must strictly increase (atomic compare-and-set).
+    prev_seq = device.last_seq
     res = db.execute(
         update(Device).where(Device.id == device.id, Device.last_seq < pkt.seq).values(last_seq=pkt.seq)
     )
@@ -132,6 +134,10 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
     # (partial readings: missing vitals and a missing AI score are simply absent from every stored copy)
     upsert_alerts(db, patient.id, result.reasons, when)
     db.commit()
+    inspector.record(packet=pkt.model_dump(), epk=epk, server_pub=keys.dh_public_raw, nonce=nonce, ct=ct, sig=sig,
+                     signed=signed, prev_seq=prev_seq, skew_s=current - pkt.ts, patient_id=patient.id,
+                     key_version=patient.key_version, store_nonce=r_nonce, store_ct=r_ct, band=result.band,
+                     vitals_count=len(vitals), scored=result.risk is not None)
     del plaintext, vitals, payload, dek  # drop plaintext references promptly
     return {"accepted": True, "band": result.band, "reasons": codes.split(",") if codes else []}
 

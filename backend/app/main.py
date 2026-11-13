@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import logging_setup
-from .api import admin, auth_routes, devices, imports, ingest_routes, patients
+from .api import admin, auth_routes, devices, imports, ingest_routes, patients, security_routes
 from .config import PROJECT_DIR, get_settings
 from .db import create_schema, init_engine
 from .jobs import jobs
@@ -135,6 +135,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app.include_router(ingest_routes.router)
     app.include_router(devices.router)
     app.include_router(imports.router)
+    app.include_router(security_routes.router)
 
     @app.get("/api/health")
     def health() -> dict:

@@ -15,13 +15,14 @@ import time
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from . import services
 from .config import PROJECT_DIR, get_settings
 from .db import SessionLocal, create_schema, init_engine
 from .ml import realdata
 from .ml.synth import PatientStream
-from .models import Assignment, User
+from .models import Assignment, Patient, User
 from .readings import ingest
 from .security import audit, auth, server_keys
 from .simulator import build_packet, runner, stream_for
@@ -69,6 +70,37 @@ def pick_eicu_stays() -> dict[str, str]:
 
 
 HISTORY_EPISODES = {"p.khan": [(5, "hypoxia")], "p.iyer": [(14, "fever")], "p.sharma": [(9, "activity")]}
+
+
+REVIEWED_AFTER_HOURS = 6
+
+
+def review_old_alerts(db: Session) -> int:
+    """Realistic starting point: alerts whose episode ended long ago were handled by the previous shift.
+
+    Alerts still active in the last few hours stay open (and escalate as usual).
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from .models import Alert, Assignment
+    from .security import crypto
+
+    cutoff = datetime.now(UTC) - timedelta(hours=REVIEWED_AFTER_HOURS)
+    n = 0
+    for a in db.query(Alert).filter(Alert.status == "open").all():
+        last = a.last_seen if a.last_seen.tzinfo else a.last_seen.replace(tzinfo=UTC)
+        if last >= cutoff:
+            continue
+        clinician_id = db.query(Assignment.clinician_id).filter_by(patient_id=a.patient_id).first()
+        if clinician_id is None:
+            continue
+        patient = db.get(Patient, a.patient_id)
+        a.status, a.acknowledged_by, a.acknowledged_at = "acknowledged", clinician_id[0], last + timedelta(minutes=20)
+        a.ack_note_enc = crypto.encrypt_field(crypto.patient_dek(patient), "Reviewed during the previous shift.",
+                                              patient_id=a.patient_id, field=f"ack:{a.id}")
+        n += 1
+    db.commit()
+    return n
 
 
 def strong_password() -> str:
@@ -149,6 +181,8 @@ def main() -> None:
             runner.keystore.set_source(dev.id, source, offset=n)  # live replay continues after the history
         print(f"  {username}: {n} encrypted readings via device {dev.id} (source: {source})")
 
+    reviewed = review_old_alerts(db)
+    print(f"  {reviewed} alerts from episodes that ended over {REVIEWED_AFTER_HOURS} h ago marked as reviewed")
     db.close()
     audit.checkpoint_now()
 

@@ -4,16 +4,14 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-_seq = [int(time.time() * 1000) + 5_000_000]
-
 
 def send(world, vitals):
     from app.security import server_keys
     from app.simulator import build_packet
+    from tests.conftest import next_seq
 
-    _seq[0] += 1
     pkt = build_packet(world["dev_id"], world["dev_key"], server_keys.load_or_create().dh_public_raw, vitals,
-                       ts=int(time.time()), seq=_seq[0])
+                       ts=int(time.time()), seq=next_seq(world["dev_id"]))
     return TestClient(world["app"], base_url="https://testserver").post("/api/ingest", json=pkt)
 
 

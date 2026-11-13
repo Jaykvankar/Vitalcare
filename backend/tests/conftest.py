@@ -122,3 +122,18 @@ def _reset_rate_limits(request):
 
         for limiter in (auth.login_limiter, auth.mfa_limiter, auth.ingest_limiter, auth.pair_limiter, auth.import_limiter):
             limiter.reset()
+
+
+def next_seq(device_id: str) -> int:
+    """Next valid sequence number for a test device (always above anything any test has sent)."""
+    import time
+
+    from app.db import SessionLocal
+    from app.models import Device
+
+    db = SessionLocal()
+    try:
+        last = db.get(Device, device_id).last_seq
+    finally:
+        db.close()
+    return max(last + 1, int(time.time() * 1000))

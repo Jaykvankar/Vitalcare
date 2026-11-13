@@ -19,7 +19,7 @@
    - **Tab 1:** http://localhost:8000 (the app)
    - **Tab 2:** `docs/architecture.html` (works offline)
    - **Tab 3:** `docs/presentation.html` (slides)
-3. Keep `seed_credentials.txt` open on a second screen or printed. Staff accounts show their 6-digit code on screen in demo mode, so no phone is needed.
+3. Staff accounts show their password and 6-digit code on the sign-in screen in demo mode, so no phone and no printed password list are needed. `seed_credentials.txt` still has them if the screen does not.
 4. Set the browser zoom to 110–125 % so the room can read it, and switch off notifications.
 
 | Account | Role | Notes |
@@ -45,7 +45,7 @@ Click **Follow one reading** and step through 2–3 steps.
 checked on arrival, scored, and stored under a key that belongs only to that patient."*
 
 ### 3. Clinician view (Tab 1, 2 min)
-1. Sign in as **dr.mehta**: password, then select **Use this code** (demo mode) → **Verify and sign in**.
+1. Under **Try a role** select **Caretaker**. That fills in `dr.mehta` and the password shown on screen, then select **Continue**, **Use this code**, and **Verify and sign in**.
    *"Staff need a second factor. In real use this comes from an authenticator app; the demo shows it on screen."*
 2. **Patient worklist**: *"Patients are ranked by urgency. Two of them are real ICU patients from the eICU dataset."*
 3. Open **Meera Iyer**:
@@ -92,6 +92,7 @@ Sign in as **p.iyer** (password only):
 ## If something goes wrong
 | Problem | Fix |
 |---|---|
+| "Invalid username or password" | Select the eye button to see what was typed (or autofilled by the browser) and compare it with the password printed when `demo.py` starts. Passwords are case-sensitive; `--reset` keeps the same ones |
 | Code rejected | Wait for the next code (changes every 30 s) and select **Use this code** again |
 | Page empty or "Not signed in" | Refresh; sign in again |
 | No readings arriving | Admin → **Data sources** → **Start all** |

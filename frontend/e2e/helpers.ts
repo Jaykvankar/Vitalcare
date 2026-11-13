@@ -45,7 +45,7 @@ export async function login(page: Page, username: string) {
   const { password, totp } = credentials(username);
   await page.goto("/");
   await page.getByLabel("Username").fill(username);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Continue" }).click();
   if (totp) {
     // The server rejects a reused code, so wait for a fresh 30 s step if this one was already used.

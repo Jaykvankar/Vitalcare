@@ -35,7 +35,7 @@ describe("small components", () => {
 
 describe("Login", () => {
   it("asks for a TOTP code after the password and offers recovery codes", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ mfa: "verify" }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ mfa: "verify" }), { status: 200 }))));
     render(<MemoryRouter><Login /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "dr.mehta" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret-password" } });
@@ -48,7 +48,7 @@ describe("Login", () => {
   });
 
   it("shows the server's error on a wrong password", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Invalid username or password" }), { status: 401 })));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ detail: "Invalid username or password" }), { status: 401 }))));
     render(<MemoryRouter><Login /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "x" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "y" } });

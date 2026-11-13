@@ -3,13 +3,14 @@
     python -m app.seed            (from backend/, server stopped)
 
 History readings go through the same seal -> sign -> ingest.process() path as live traffic.
-Credentials (passwords + TOTP secrets) are written to seed_credentials.txt (gitignored), never to the UI.
+Credentials are written to seed_credentials.txt (gitignored). In demo mode the sign-in page
+shows those passwords; TOTP secrets and recovery codes stay in the file.
 """
 from __future__ import annotations
 
 import os
+import re
 import secrets
-import string
 import sys
 import time
 from pathlib import Path
@@ -103,9 +104,43 @@ def review_old_alerts(db: Session) -> int:
     return n
 
 
-def strong_password() -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#%^*-_"
-    return "".join(secrets.choice(alphabet) for _ in range(16))
+# Demo passwords are three random words and three digits, e.g. "AmberFalconHarbor482": easy to read aloud and
+# type, no 0/O or 1/l/I look-alikes, no symbols (a double-click selects the whole password).
+WORDS = (
+    "amber anchor apple arrow aspen atlas autumn badge bamboo banner basket beacon berry birch bison blossom "
+    "breeze bridge brook bucket button cabin cactus camel candle canyon carbon cargo castle cedar cherry cinder "
+    "circle clover cobalt comet copper coral cotton cougar crater crown daisy delta desert dolphin dragon "
+    "eagle ember falcon fern festival field flame forest fossil fountain fox garden garnet ginger glacier "
+    "granite grape gravel harbor hazel heron hollow honey horizon husky jacket jasmine jungle kettle "
+    "kiwi koala mango maple marble meadow melon meteor mint mirror monsoon moss mountain nectar needle "
+    "nutmeg ocean otter oyster paddle panda parrot pebble pepper pigeon pillow pine planet plum pocket "
+    "pony poppy prairie puzzle quartz rabbit radar rain raven reef ribbon river robin rocket saffron "
+    "salmon sandal satin school shadow shell silver sketch sparrow spice spring spruce summit sunset "
+    "swan tango temple thunder tiger timber topaz tulip tundra turtle valley velvet violet walnut "
+    "willow window winter wizard yarrow zebra"
+).split()
+READABLE = re.compile(r"^(?:[A-Z][a-z]+){3}[2-9]{3}$")
+
+
+def readable_password() -> str:
+    return "".join(secrets.choice(WORDS).capitalize() for _ in range(3)) + "".join(
+        secrets.choice("23456789") for _ in range(3))
+
+
+def previous_passwords(path: str | None) -> dict[str, str]:
+    """Readable passwords from an earlier seed_credentials.txt, so a reset keeps them (and the browser's saved ones)."""
+    if not path or not Path(path).is_file():
+        return {}
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    found: dict[str, str] = {}
+    user = None
+    for i, line in enumerate(lines):
+        m = re.match(r"^== (\S+) \(", line)
+        if m:
+            user = m.group(1)
+        elif user and line == "password:" and i + 1 < len(lines) and READABLE.match(lines[i + 1].strip()):
+            found[user] = lines[i + 1].strip()
+    return found
 
 
 def main() -> None:
@@ -122,16 +157,18 @@ def main() -> None:
     creds = []
     recovery: dict[str, list[str]] = {}
     users: dict[str, User] = {}
+    keep = previous_passwords(os.environ.get("RPM_SEED_KEEP_PASSWORDS"))
     for username, name, role, pii in PEOPLE:
-        pw = strong_password()
+        pw = keep.get(username) or readable_password()
         u = services.create_user(db, username=username, full_name=name, role=role, password=pw,
                                  dob=pii.get("dob"), phone=pii.get("phone"), address=pii.get("address"))
         totp_secret = ""
+        u.demo_account = True            # seeded demo account: shown under "Try a role" in demo mode
+        db.commit()
         if role in auth.MFA_ROLES:
             totp_secret = auth.new_totp_secret()
             auth.store_totp_secret(u, totp_secret)
             u.totp_confirmed = True
-            u.demo_account = True
             db.commit()
             recovery[username] = auth.issue_recovery_codes(db, u)
         users[username] = u

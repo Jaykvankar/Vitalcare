@@ -219,6 +219,15 @@ select { appearance: none; padding-right: 32px;
   background-repeat: no-repeat; background-position: right 12px center; }
 label.field { display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--ink-2); }
 .hint { font-weight: 400; color: var(--muted); font-size: 0.78rem; }
+.password-field { position: relative; display: block; }
+.password-field input { padding-right: 46px; }
+.password-field .reveal {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px;
+  display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer;
+}
+.password-field .reveal:hover { color: var(--ink); background: var(--surface-3); }
+.password-field .reveal:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); color: var(--ink); }
+.demo-hint code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.9em; }
 
 /* ------------------------------------------------------------------ app shell */
 .shell { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }

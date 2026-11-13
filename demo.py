@@ -28,6 +28,29 @@ def step(msg: str) -> None:
     print(f"\n==> {msg}", flush=True)
 
 
+def web_app_outdated() -> bool:
+    """True when frontend/dist is missing or older than any frontend source file."""
+    built = ROOT / "frontend" / "dist" / "index.html"
+    if not built.exists():
+        return True
+    front = ROOT / "frontend"
+    sources = [front / "index.html", front / "package.json", *(front / "src").rglob("*"), *(front / "public").rglob("*")]
+    newest = max((p.stat().st_mtime for p in sources if p.is_file()), default=0.0)
+    return newest > built.stat().st_mtime
+
+
+def sign_ins(creds: str) -> list[tuple[str, str, str]]:
+    """(username, role, password) from seed_credentials.txt (one value per line under "== user (role)")."""
+    lines = creds.splitlines()
+    out = []
+    for i, line in enumerate(lines):
+        if line.startswith("== ") and " (" in line:
+            user, role = line[3:].split(" (", 1)
+            pw = next((lines[j + 1] for j in range(i + 1, len(lines) - 1) if lines[j] == "password:"), "")
+            out.append((user, role.rstrip(")"), pw.strip()))
+    return out
+
+
 def run(args: list[str], cwd: Path = ROOT) -> None:
     subprocess.run(args, cwd=cwd, check=True)  # noqa: S603  (fixed argument lists)
 
@@ -44,12 +67,14 @@ def main() -> None:
     if not (ROOT / "certs" / "dev-cert.pem").exists():
         step("Creating a self-signed TLS certificate for localhost")
         run([PY, "scripts/gen_dev_cert.py"])
-    if not (ROOT / "frontend" / "dist" / "index.html").exists():
+    if web_app_outdated():
         npm = shutil.which("npm")
         if npm is None:
-            sys.exit("The web app is not built and npm was not found. Install Node.js 20+ and run this again.")
-        step("Building the web app (first run only)")
-        run([npm, "ci", "--no-audit", "--no-fund"], cwd=ROOT / "frontend")
+            sys.exit("The web app is not built (or is older than its source) and npm was not found. "
+                     "Install Node.js 20+ and run this again.")
+        step("Building the web app")
+        if not (ROOT / "frontend" / "node_modules").exists():
+            run([npm, "ci", "--no-audit", "--no-fund"], cwd=ROOT / "frontend")
         run([npm, "run", "build"], cwd=ROOT / "frontend")
 
     data_dir = ROOT / "backend" / "data"
@@ -60,18 +85,22 @@ def main() -> None:
         for p in (data_dir, ROOT / "simulator_keys", ROOT / "seed_credentials.txt"):
             if p.exists():
                 shutil.move(str(p), str(backup / p.name))
+        # Keep the same (readable) passwords after a reset, so a browser that saved them still signs in.
+        os.environ["RPM_SEED_KEEP_PASSWORDS"] = str(backup / "seed_credentials.txt")
     if not (data_dir / "rpm.db").exists():
         step("Seeding demo users, patients and 24 h of encrypted history (about a minute)")
         run([PY, "-m", "app.seed"], cwd=ROOT / "backend")
 
     url = "https://localhost:8443" if a.https else "http://localhost:8000"
     creds = (ROOT / "seed_credentials.txt").read_text(encoding="utf-8")
+    accounts = "\n".join(f"      {u:10} {r:10} {pw}" for u, r, pw in sign_ins(creds))
     print(f"""
 ==> Vitalcare is starting at {url}
 
-    Accounts and passwords:   seed_credentials.txt
-    Staff 6-digit code:       {PY} scripts\\totp_code.py dr.mehta   (or admin / dr.rao)
-    Patients (no code):       p.sharma  p.iyer  p.khan  p.das
+    Sign in with (also in seed_credentials.txt; passwords are case-sensitive):
+{accounts}
+    In demo mode the sign-in page fills the password when you pick a role.
+    Staff then get a 6-digit code on that same page (select Use this code).
 
     Try it:
       dr.mehta  -> worklist ranked by urgency -> open a patient -> acknowledge an alert
@@ -79,9 +108,9 @@ def main() -> None:
       p.iyer    -> own vitals, pause sharing, download my data
 
     Press Ctrl+C to stop.
-""")
+""", flush=True)
     if "recovery codes" not in creds:
-        print("    (This demo database predates recovery codes; staff can create them under Account.)\n")
+        print("    (This demo database predates recovery codes; staff can create them under Account.)\n", flush=True)
     env = {**os.environ, "RPM_DEMO_AUTOSTREAM": "true", "RPM_DEMO_MODE": "true"}
     cmd = [PY, str(ROOT / "run_server.py")] + ([] if a.https else ["--http"])
     try:

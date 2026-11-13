@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, Me } from "../api";
@@ -54,28 +54,43 @@ function ChartTrace() {
   );
 }
 
-const DEMOS: { user: string; password: string; label: string; icon: keyof typeof Icon; hint: string }[] = [
-  { user: "p.iyer", password: "fgNFIPfWKdyEky1F", label: "Patient", icon: "Heart", hint: "Meera Iyer sees only her own vitals, and can pause sharing." },
-  { user: "dr.mehta", password: "3IRSj5E1GjC2-ICC", label: "Caretaker", icon: "Users", hint: "Dr. Mehta opens a worklist ranked by urgency. A 6-digit code comes next." },
-  { user: "admin", password: "uulUZKQa6Q!u*QEI", label: "Admin", icon: "Shield", hint: "Asha Admin manages people and the ledger, and cannot read vitals. A 6-digit code comes next." },
+export interface DemoAccount { username: string; role: string; full_name: string; password?: string }
+
+/** One button per role. Prefers the account the demo script uses; falls back to any seeded account with that role. */
+const ROLE_PICKS: { role: string; prefer: string; label: string; icon: keyof typeof Icon; hint: (name: string) => string }[] = [
+  { role: "patient", prefer: "p.iyer", label: "Patient", icon: "Heart", hint: (n) => `${n} sees only their own vitals, and can pause sharing.` },
+  { role: "clinician", prefer: "dr.mehta", label: "Caretaker", icon: "Users", hint: (n) => `${n} opens a worklist ranked by urgency. A 6-digit code comes next.` },
+  { role: "admin", prefer: "admin", label: "Admin", icon: "Shield", hint: (n) => `${n} manages people and the ledger, and cannot read vitals. A 6-digit code comes next.` },
 ];
 
-function DemoRoles({ active, onPick }: { active: string; onPick: (user: string, password: string) => void }) {
-  const chosen = DEMOS.find((d) => d.user === active);
+/** Demo mode only (the server returns no accounts otherwise). Fills in the username and, when the seed file
+ *  has one, the password. TOTP secrets are never sent. */
+function DemoRoles({ accounts, active, onPick }: { accounts: DemoAccount[]; active: string; onPick: (account: DemoAccount) => void }) {
+  const picks = ROLE_PICKS.flatMap((p) => {
+    const a = accounts.find((x) => x.username === p.prefer) ?? accounts.find((x) => x.role === p.role);
+    return a ? [{ ...p, account: a }] : [];
+  });
+  if (picks.length === 0) return null;
+  const chosen = picks.find((p) => p.account.username === active);
   return (
     <div className="demo-roles">
-      <span className="label">Try a role</span>
+      <span className="label">Try a role (demo)</span>
       <div className="demo-row">
-        {DEMOS.map((d) => {
-          const I = Icon[d.icon];
+        {picks.map((p) => {
+          const I = Icon[p.icon];
           return (
-            <button key={d.user} type="button" className={active === d.user ? "demo-role on" : "demo-role"} onClick={() => onPick(d.user, d.password)}>
-              <I size={16} /> {d.label}
+            <button key={p.role} type="button" className={active === p.account.username ? "demo-role on" : "demo-role"} onClick={() => onPick(p.account)}>
+              <I size={16} /> {p.label}
             </button>
           );
         })}
       </div>
-      {chosen && <p className="demo-hint">{chosen.hint}</p>}
+      {chosen && (
+        <p className="demo-hint">
+          {chosen.hint(chosen.account.full_name)} Username <b>{chosen.account.username}</b>
+          {chosen.account.password ? <> and password <code>{chosen.account.password}</code> are filled in.</> : <> is filled in. Type the password from <code>seed_credentials.txt</code>.</>}
+        </p>
+      )}
     </div>
   );
 }
@@ -90,6 +105,27 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [useRecovery, setUseRecovery] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [demoAccounts, setDemoAccounts] = useState<DemoAccount[]>([]);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    api<{ demo: boolean; accounts: DemoAccount[] }>("/api/auth/demo-accounts")
+      .then((d) => live && setDemoAccounts(Array.isArray(d?.accounts) ? d.accounts : []))
+      .catch(() => live && setDemoAccounts([]));
+    return () => { live = false; };
+  }, []);
+
+  const pickDemo = (account: DemoAccount) => {
+    setUsername(account.username);
+    setPassword(account.password ?? "");
+    setShowPassword(false);
+    setError("");
+    setStep({ kind: "password" });
+    if (passwordRef.current) passwordRef.current.focus();
+    else window.setTimeout(() => passwordRef.current?.focus(), 0);   // coming back from the code step
+  };
 
   const done = (me: Me) => {
     setMe(me);
@@ -103,7 +139,7 @@ export default function Login() {
     try {
       const r = await api<{ mfa: string; user?: Me; otpauth_uri?: string; secret?: string }>("/api/auth/login", {
         method: "POST",
-        body: { username, password },
+        body: { username: username.trim(), password },
       });
       setPassword("");
       if (r.mfa === "none" && r.user) done(r.user);
@@ -151,7 +187,7 @@ export default function Login() {
             <div><Icon.Ledger size={18} /> Tamper-evident ledger of every access</div>
           </div>
         </div>
-        <DemoRoles active={username} onPick={(user, pass) => { setUsername(user); setPassword(pass); setError(""); setStep({ kind: "password" }); }} />
+        <DemoRoles accounts={demoAccounts} active={username} onPick={pickDemo} />
       </section>
 
       <section className="login-form">
@@ -168,7 +204,15 @@ export default function Login() {
                 </label>
                 <label className="field">
                   Password
-                  <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                  <span className="password-field">
+                    <input ref={passwordRef} type={showPassword ? "text" : "password"} autoComplete="current-password" value={password}
+                      onChange={(e) => setPassword(e.target.value)} required />
+                    <button type="button" className="reveal" onClick={() => setShowPassword((s) => !s)}
+                      aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
+                      title={showPassword ? "Hide password" : "Show password"}>
+                      {showPassword ? <Icon.EyeOff size={18} /> : <Icon.Eye size={18} />}
+                    </button>
+                  </span>
                 </label>
                 {error && <div className="notice error">{error}</div>}
                 <button className="btn primary block" disabled={busy}>
@@ -238,7 +282,7 @@ export default function Login() {
           )}
         </div>
         <p className="login-note">Staff enter a 6-digit code after the password. Patients sign in with a password only.</p>
-        <DemoRoles active={username} onPick={(user, pass) => { setUsername(user); setPassword(pass); setError(""); setStep({ kind: "password" }); }} />
+        <DemoRoles accounts={demoAccounts} active={username} onPick={pickDemo} />
       </section>
     </div>
   );

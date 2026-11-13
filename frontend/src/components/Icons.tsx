@@ -38,7 +38,9 @@ export const Icon = {
   ArrowLeft: (p: P) => <Base {...p}><path d="M19 12H5M12 19l-7-7 7-7" /></Base>,
   Key: (p: P) => <Base {...p}><circle cx="7.5" cy="15.5" r="4.5" /><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3" /></Base>,
   Database: (p: P) => <Base {...p}><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></Base>,
-  X: (p: P) => <Base {...p}><path d="M18 6 6 18M6 6l12 12" /></Base>,
+  Eye: (p: P) => <Base {...p}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></Base>,
+  EyeOff: (p: P) => <Base {...p}><path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.2 3.1M6.6 6.6A17.3 17.3 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20" /></Base>,
+  X: (p: P) =><Base {...p}><path d="M18 6 6 18M6 6l12 12" /></Base>,
 };
 
 export function initials(name: string) {

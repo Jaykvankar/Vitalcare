@@ -46,7 +46,7 @@ Then one command does the rest:
 ```
 
 * With the real datasets downloaded (below), two demo patients replay **real eICU ICU stays from two different hospitals**, one replays a MIMIC-III stay, and one is synthetic, so you can inject a deterioration from Admin → **Data sources**.
-* Accounts and passwords are in `seed_credentials.txt`. Staff also need a 6-digit code. In demo mode the sign-in screen shows it after the password step (**Use this code**), for the seeded accounts only. Outside the demo, or from a terminal:
+* Accounts and passwords are in `seed_credentials.txt`. In demo mode, **Try a role** fills the username and shows the password. Staff also need a 6-digit code, shown after the password step (**Use this code**), for the seeded accounts only. Outside the demo, or from a terminal:
 
 ```bash
 .venv\Scripts\python scripts\totp_code.py dr.mehta

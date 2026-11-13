@@ -266,3 +266,56 @@ def test_demo_code_only_in_demo_mode_for_seeded_accounts_after_password(world):
         db.commit()
         db.close()
         auth.mfa_limiter.reset()
+
+
+def test_demo_accounts_lists_usernames_only_in_demo_mode(world, tmp_path, monkeypatch):
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import User
+
+    c = raw_client(world)
+    monkeypatch.setenv("RPM_SEED_CREDENTIALS", str(tmp_path / "missing.txt"))
+    assert c.get("/api/auth/demo-accounts").json() == {"demo": False, "accounts": []}
+    settings = get_settings()
+    settings.demo_mode = True
+    db = SessionLocal()
+    db.query(User).filter_by(username="pat2").update({"demo_account": True})
+    db.commit()
+    try:
+        body = c.get("/api/auth/demo-accounts").json()
+        assert body["demo"] is True
+        assert {"username": "pat2", "role": "patient", "full_name": "Pat Two"} in body["accounts"]
+        assert "clin1" not in {a["username"] for a in body["accounts"]}          # not a seeded demo account
+        assert all("password" not in a for a in body["accounts"])                # no password unless the seed file has one
+        creds = tmp_path / "seed_credentials.txt"
+        creds.write_text("== pat2 (patient)\npassword:\nAmberFalconHarbor482\ntotp secret:\nSHOULDNOTLEAK\n", encoding="utf-8")
+        monkeypatch.setenv("RPM_SEED_CREDENTIALS", str(creds))
+        body = c.get("/api/auth/demo-accounts").json()
+        pat2 = next(a for a in body["accounts"] if a["username"] == "pat2")
+        assert pat2["password"] == "AmberFalconHarbor482"
+        assert "SHOULDNOTLEAK" not in str(body)
+        assert all(set(a) <= {"username", "role", "full_name", "password"} for a in body["accounts"])
+    finally:
+        settings.demo_mode = False
+        db.query(User).filter_by(username="pat2").update({"demo_account": False})
+        db.commit()
+        db.close()
+
+
+def test_login_ignores_spaces_around_the_username(world):
+    c = raw_client(world)
+    assert c.post("/api/auth/login", json={"username": "  pat1 ", "password": world["pw"]}).status_code == 200
+    assert c.post("/api/auth/login", json={"username": "pat1", "password": world["pw"] + " "}).status_code == 401
+
+
+def test_demo_passwords_are_readable_and_kept_across_resets(tmp_path):
+    from app.seed import READABLE, previous_passwords, readable_password
+
+    pws = {readable_password() for _ in range(500)}
+    assert len(pws) == 500 and all(READABLE.match(p) and len(p) >= 12 for p in pws)
+    assert not any(ch in p for p in pws for ch in "01!@#%^*-_ ")       # no 0/1 look-alikes, no symbols or spaces
+    creds = tmp_path / "seed_credentials.txt"
+    creds.write_text("# header\n\n== dr.mehta (clinician)\nusername:\ndr.mehta\npassword:\nAmberFalconHarbor482\n\n"
+                     "== admin (admin)\nusername:\nadmin\npassword:\nx#Old-Hard-Pass1\n\n", encoding="utf-8")
+    assert previous_passwords(str(creds)) == {"dr.mehta": "AmberFalconHarbor482"}   # old hard ones are replaced
+    assert previous_passwords(str(tmp_path / "missing.txt")) == {} and previous_passwords(None) == {}

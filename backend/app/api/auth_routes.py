@@ -37,7 +37,7 @@ def user_out(db: Session, u: User) -> dict:
 def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)) -> dict:
     ip = auth.client_ip(request)
     auth.login_limiter.check(ip)
-    user = auth.find_user(db, body.username)
+    user = auth.find_user(db, body.username.strip())   # usernames never contain spaces; passwords are used exactly
     generic = HTTPException(401, "Invalid username or password")
     if user is None or not user.active:
         burn_password_time(body.password)
@@ -116,6 +116,33 @@ def regenerate_recovery_codes(user: User = Depends(auth.require_role("admin", "c
     codes = auth.issue_recovery_codes(db, user)
     audit.append("recovery_codes_regenerated", actor_id=user.id, actor=user.username)
     return {"recovery_codes": codes}
+
+
+@router.get("/demo-accounts")
+def demo_accounts(db: Session = Depends(get_db)) -> dict:
+    """Demo helper for the sign-in page's "Try a role" buttons.
+
+    Only in demo mode. The readable password from seed_credentials.txt is included so the sign-in page can fill
+    it in. The database stores only the PBKDF2 hash, and TOTP secrets and recovery codes stay in the file.
+    """
+    import os
+
+    from sqlalchemy import select
+
+    from ..config import PROJECT_DIR, get_settings
+    from ..seed import previous_passwords
+
+    if not get_settings().demo_mode:
+        return {"demo": False, "accounts": []}
+    passwords = previous_passwords(os.environ.get("RPM_SEED_CREDENTIALS", str(PROJECT_DIR / "seed_credentials.txt")))
+    users = db.scalars(select(User).where(User.demo_account.is_(True), User.active.is_(True)).order_by(User.id)).all()
+    accounts = []
+    for u in users:
+        row = {"username": u.username, "role": u.role, "full_name": u.full_name}
+        if u.username in passwords:
+            row["password"] = passwords[u.username]
+        accounts.append(row)
+    return {"demo": True, "accounts": accounts}
 
 
 @router.get("/demo-code")

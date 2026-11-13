@@ -17,7 +17,7 @@ out.mkdir(exist_ok=True)
 
 key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
 name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
-                  x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SecureRPM dev")])
+                  x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Vitalcare dev")])
 now = datetime.datetime.now(datetime.UTC)
 cert = (
     x509.CertificateBuilder()

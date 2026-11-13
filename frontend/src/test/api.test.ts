@@ -5,6 +5,7 @@ describe("sourceInfo", () => {
   it("labels real-data replays and synthetic data honestly", () => {
     expect(sourceInfo("mimic:249805")).toMatchObject({ kind: "real", label: "Real data replay" });
     expect(sourceInfo("bidmc:7").detail).toContain("BP/temp not recorded");
+    expect(sourceInfo("eicu:141765")).toMatchObject({ kind: "real", detail: expect.stringContaining("eICU") });
     expect(sourceInfo("synthetic").kind).toBe("synthetic");
     expect(sourceInfo(undefined).kind).toBe("none");
   });

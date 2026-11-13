@@ -1,4 +1,4 @@
-# SecureRPM: AI-based Secure Remote Patient Monitoring
+# Vitalcare: AI-based Secure Remote Patient Monitoring
 
 Simulated wearables send vital signs to a server. Each reading is **sealed with Diffie–Hellman + AES-256-GCM** and **signed with RSA-3072 (sign-the-digest)**.
 
@@ -11,9 +11,21 @@ The server then:
 Clinicians see a risk-sorted worklist, charts and alerts. Patients see their own data and control consent.
 
 > Educational project, not a certified medical device. Patients and names are fictional. Vital signs are either
-> synthetic or **replayed from real, de-identified ICU recordings** (PhysioNet MIMIC-III demo and BIDMC; see below).
+> synthetic or **replayed from real, de-identified ICU recordings** (PhysioNet eICU demo, MIMIC-III demo and BIDMC; see below).
 
-## Quick start (Windows, from the project folder)
+## Start here
+
+| You want to | Open |
+|---|---|
+| See how the whole system works (interactive diagram, step-throughs) | [docs/architecture.html](docs/architecture.html) in any browser |
+| Run the working demo | the command below |
+| Set it up at a hospital and connect real devices | [docs/HANDOFF.md](docs/HANDOFF.md) |
+| Use it day to day | [docs/user_guide.md](docs/user_guide.md) |
+| Answer viva questions | [docs/viva_defense.md](docs/viva_defense.md) |
+
+## Run the demo (Windows, from the project folder)
+
+First time only, create the Python environment:
 
 ```bash
 python -m venv .venv
@@ -21,65 +33,66 @@ python -m venv .venv
 ```bash
 .venv\Scripts\python -m pip install -r backend\requirements.txt
 ```
-```bash
-.venv\Scripts\python scripts\init_env.py
-```
-```bash
-.venv\Scripts\python scripts\gen_dev_cert.py
-```
-```bash
-cd backend && ..\.venv\Scripts\python -m app.seed && cd ..
-```
-```bash
-cd frontend && npm install && npm run build && cd ..
-```
-```bash
-.venv\Scripts\python run_server.py
-```
 
-Open **https://localhost:8443**. The certificate is self-signed. Either trust `certs/dev-cert.pem` in Windows (Current User → Trusted Root Certification Authorities), or use the localhost-only HTTP mode at http://localhost:8000:
+Then one command does the rest:
+1. creates the keys and the certificate,
+2. builds the web app (needs Node.js 20+),
+3. seeds four patients with 24 h of encrypted history,
+4. starts the server at **http://localhost:8000**, with every patient's monitor streaming.
 
 ```bash
-.venv\Scripts\python run_server.py --http
+.venv\Scripts\python demo.py
 ```
 
-Seeded accounts and passwords are in `seed_credentials.txt`.
-- Clinicians and the admin need a **TOTP code (SHA-512)**. Add the secret to Aegis, 2FAS or FreeOTP with algorithm SHA512, or print the current code:
+* With the real datasets downloaded (below), two demo patients replay **real eICU ICU stays from two different hospitals**, one replays a MIMIC-III stay, and one is synthetic, so you can inject a deterioration from Admin → **Data sources**.
+* Accounts and passwords are in `seed_credentials.txt`. Staff also need a 6-digit code:
 
 ```bash
 .venv\Scripts\python scripts\totp_code.py dr.mehta
 ```
 
-Demo flow:
-1. Admin → **Simulator** → *Start all*, then inject `hypoxia` for a patient.
-2. Sign in as `dr.mehta` and watch the worklist reorder. Open the patient and acknowledge alerts.
-3. Sign in as a patient, view the data and toggle consent.
-4. Admin → **Audit log** → *Verify integrity*.
+* `demo.py --https` serves https://localhost:8443 with the self-signed certificate (trust `certs/dev-cert.pem` in Windows first).
+* `demo.py --reset` backs up the demo data and seeds it again.
 
-## Real data (optional, about 77 MB)
+Five-minute walkthrough:
+1. **dr.mehta:** the worklist is ranked by urgency. Open the top patient to see the AI explanation, trends and alerts, then acknowledge an alert.
+2. **admin:** switch a monitor to another real ICU stay under **Data sources**, onboard staff under **Bulk import**, and check the **Privacy ledger**.
+3. **p.iyer:** sees only her own data, can pause sharing and can download her data.
 
-The model is trained on synthetic episodes, because no open dataset marks *when* deterioration started.
-Real recordings are used two ways: to **evaluate** the system and to **replay** through a simulated device.
+Running pieces by hand instead: `scripts/init_env.py`, `scripts/gen_dev_cert.py`, `python -m app.seed` (in `backend/`), `npm run build` (in `frontend/`), then `run_server.py` (HTTPS) or `run_server.py --http`.
 
-Download into `data/real/` (git-ignored, open access, no login):
+## Real data (optional, about 100 MB, all open access)
+
+The live model is trained on synthetic episodes, because no open dataset marks *when* deterioration started.
+Real recordings are used two ways: to **evaluate** the system and to **replay** real patients through a simulated device.
+
+Download into `data/real/` (git-ignored, no login needed):
+- **eICU Collaborative Research Database Demo** (ODbL): `patient.csv.gz`, `hospital.csv.gz`, `vitalPeriodic.csv.gz`, `vitalAperiodic.csv.gz` from `https://physionet.org/files/eicu-crd-demo/2.0.1/`, saved to `data/real/eicu/` (about 22 MB).
 - **MIMIC-III Clinical Database Demo** (ODbL): `CHARTEVENTS.csv`, `D_ITEMS.csv`, `ADMISSIONS.csv`, `ICUSTAYS.csv`, `PATIENTS.csv` from `https://physionet.org/files/mimiciii-demo/1.4/`, saved to `data/real/mimic/`.
 - **BIDMC** (ODC-BY): `bidmc_01_Numerics.csv` … `bidmc_53_Numerics.csv` from `https://physionet.org/files/bidmc/1.0.0/bidmc_csv/`, saved to `data/real/bidmc/`.
 
-Then run, from `backend/`:
+Then run, from `backend/` (about 3 minutes):
 
 ```bash
 ..\.venv\Scripts\python -m app.ml.eval_real
 ```
 
-This writes [docs/real_data_report.md](docs/real_data_report.md). Highlights on 100 real ICU stays (32 deaths):
-- In the first 24 h, the model separates later in-hospital death better than NEWS2 (AUROC 0.62 vs 0.53).
-- Neither is strong enough for clinical use.
+This writes [docs/real_data_report.md](docs/real_data_report.md). Highlights:
+- **eICU, 2,032 stays from 184 hospitals, first 24 h → later in-hospital death (AUROC):**
+  - NEWS2: 0.734
+  - our synthetic-trained model: 0.687
+  - a model trained on real data from *other* hospitals: **0.760 ± 0.05** on hospitals it never saw
+- **Main next step:** retraining on real data and validating it at each new hospital.
+- **MIMIC-III, 100 stays:** the model 0.62 vs NEWS2 0.53. That is too small a set to rely on.
+- **Not clinically useful yet:** none of these is strong enough for clinical use, and eICU shows about 3.8 critical alerts per patient-day at 5-minute resolution.
 
-When the data is present, seeding makes Imran Khan's monitor replay a real MIMIC-III ICU stay. Admin → **Data sources** can switch any monitor to a MIMIC stay or a BIDMC record.
+When the data is present, seeding makes Meera Iyer's and Ananya Das's monitors replay real eICU stays (two different hospitals) and Imran Khan's a MIMIC-III stay. Admin → **Data sources** can switch any monitor to another eICU or MIMIC stay or a BIDMC record.
 
 ## Pairing a device
 
-Admins, and clinicians on the patient's care team, can pair devices (patient record → Devices → **Pair device**, or Admin → **Devices & pairing**):
+Admins, and clinicians on the patient's care team, connect devices with a guided wizard (patient record → Devices → **Connect device**, or Admin → **Devices & pairing**) that shows a QR code and a one-time code. The in-app **Device guide** lists which devices work and how to fix common problems.
+
+How pairing works underneath:
 1. A one-time code is issued (10 min, `XXXX-XXXX-XXXX`).
 2. The device generates its own RSA-3072 key and proves it knows the code with HMAC-SHA-512. The code never crosses the network.
 3. Five wrong proofs burn the code; a used code cannot be reused.
@@ -93,6 +106,14 @@ Pairing from the command line:
 ```bash
 .venv\Scripts\python scripts\device_client.py stream --source synthetic
 ```
+
+A real sensor connects through a small adapter program that prints one JSON line per reading:
+
+```bash
+python scripts/sensor_example.py | python scripts/device_client.py stream --source stdin
+```
+
+Hospital setup, device choices (Bluetooth services, gateways) and operations: [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## Onboarding a real hospital
 
@@ -108,7 +129,8 @@ See [docs/user_guide.md](docs/user_guide.md), [docs/architecture.md](docs/archit
 cd backend && ..\.venv\Scripts\python -m pytest -q --cov
 ```
 ```bash
-cd backend && ..\.venv\Scriptsuff check . ../scripts && ..\.venv\Scripts\mypy app
+cd backend && ..\.venv\Scripts
+uff check . ../scripts && ..\.venv\Scripts\mypy app
 ```
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm test

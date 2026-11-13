@@ -7,7 +7,7 @@ flowchart LR
   subgraph Edge["Patient side"]
     dev["Device / gateway<br/>(simulator or device_client.py)<br/>own RSA-3072 key"]
   end
-  subgraph Server["SecureRPM server (FastAPI, one origin)"]
+  subgraph Server["Vitalcare server (FastAPI, one origin)"]
     ingest["Ingest<br/>verify RSA sig · anti-replay · unseal DH+AES"]
     ml["Risk engine<br/>rules · NEWS2 · gradient boosting"]
     env["Envelope crypto<br/>per-patient AES-256 key"]

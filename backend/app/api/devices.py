@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import device_catalog
 from ..db import get_db
 from ..models import Device, Patient, User
 from ..security import audit, auth, pairing, rbac, server_keys
@@ -15,6 +16,11 @@ from ..security.hashing import b64d, b64e
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
+
+@router.get("/catalog")
+def catalog(user: User = Depends(auth.current_user)) -> list[dict]:
+    """Which kinds of devices can be connected, in plain language (see app/device_catalog.py)."""
+    return [dict(d) for d in device_catalog.for_role(user.role)]
 
 
 def _can_manage(db: Session, user: User, patient_id: int) -> Patient:
@@ -38,22 +44,26 @@ def list_devices(patient_id: int, user: User = Depends(auth.require_role("admin"
         by = db.get(User, d.paired_by) if d.paired_by else None
         out.append({"id": d.id, "label": d.label, "active": d.active, "last_seen": _iso(d.last_seen),
                     "paired_at": _iso(d.created_at), "paired_by": by.full_name if by else "System",
-                    "revoked_at": _iso(d.revoked_at)})
+                    "revoked_at": _iso(d.revoked_at), "kind": d.kind, "device_type": d.device_type})
     return out
 
 
 class CodeIn(BaseModel):
     patient_id: int
     label: str = Field("Wearable monitor", min_length=1, max_length=64)
+    device_type: str | None = Field(None, max_length=32)
 
 
 @router.post("/pairing-codes")
 def create_code(body: CodeIn, user: User = Depends(auth.require_role("admin", "clinician")),
                 db: Session = Depends(get_db)) -> dict:
     p = _can_manage(db, user, body.patient_id)
-    pc, code = pairing.create(db, patient_id=p.id, label=body.label.strip(), created_by=user.id)
+    if body.device_type is not None and not device_catalog.is_allowed(body.device_type, user.role):
+        raise HTTPException(422, "Unknown device type")
+    pc, code = pairing.create(db, patient_id=p.id, label=body.label.strip(), created_by=user.id,
+                              device_type=body.device_type)
     audit.append("pairing_code_issued", actor_id=user.id, actor=user.username, target=f"patient:{p.id}",
-                 detail=f"pairing={pc.id} label={pc.label}")
+                 detail=f"pairing={pc.id} label={pc.label} type={pc.device_type or '-'}")
     return {"pairing_id": pc.id, "code": code, "expires_at": _iso(pc.expires_at)}
 
 

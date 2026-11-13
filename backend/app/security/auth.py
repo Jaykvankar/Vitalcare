@@ -124,7 +124,7 @@ def totp(secret: str) -> pyotp.TOTP:
 
 
 def provisioning_uri(user: User, secret: str) -> str:
-    return totp(secret).provisioning_uri(name=user.username, issuer_name="SecureRPM")
+    return totp(secret).provisioning_uri(name=user.username, issuer_name="Vitalcare")
 
 
 def store_totp_secret(user: User, secret: str) -> None:

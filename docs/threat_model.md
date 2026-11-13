@@ -3,7 +3,7 @@
 **Assets:** vital signs, patient identity and contact details, clinician notes, credentials, keys, and the integrity of the access record.
 **Trust boundaries:** device ↔ network ↔ server; browser ↔ server; server ↔ database/backups; operators (admins, DBAs) inside the organisation.
 
-| STRIDE | Threat | Mitigation in SecureRPM | Residual risk |
+| STRIDE | Threat | Mitigation in Vitalcare | Residual risk |
 |---|---|---|---|
 | **S**poofing | Fake device sends readings | Per-device RSA-3072 key; RSA-PSS sign-the-digest on every packet; keys registered only via one-time pairing code (HMAC proof, 10 min, 5 tries) | Stolen physical device keeps its key until revoked |
 | | Stolen password | PBKDF2-HMAC-SHA-512 (210k); lockout + DB rate limit; TOTP (HMAC-SHA-512) for staff; single-use recovery codes | Patients have password-only sign-in |

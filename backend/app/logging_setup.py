@@ -22,7 +22,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname.lower(),
             "logger": record.name,
             "msg": record.getMessage(),
-            "request_id": request_id.get(),
+            "request_id": getattr(record, "request_id", None) or request_id.get(),
         }
         for key in ("method", "path", "status", "duration_ms"):
             if hasattr(record, key):
@@ -32,9 +32,19 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(out, separators=(",", ":"))
 
 
+class RequestIdFilter(logging.Filter):
+    """Stamp the current request id onto each record when it is created, not when it is printed."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "request_id"):
+            record.request_id = request_id.get()
+        return True
+
+
 def configure() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    handler.addFilter(RequestIdFilter())
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(os.environ.get("RPM_LOG_LEVEL", "INFO").upper())

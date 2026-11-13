@@ -10,7 +10,7 @@
 - **Bulk import:** download the template, fill in staff and patients (with `care_team` usernames), upload, check the preview, then create. Download the temporary passwords file immediately; it is shown once.
 - **People:** add individuals, disable accounts, reset someone's two-step sign-in, or **Erase** a patient (crypto-shredding, irreversible).
 - **Care teams:** link clinicians to patients. Only linked clinicians can see a patient.
-- **Devices & pairing:** issue a pairing code for any patient; revoke lost devices.
+- **Devices & pairing:** connect a device for any patient (choose the type, name it, scan the QR code on the gateway); revoke lost devices. **Device guide** explains supported devices and troubleshooting.
 - **Data sources:** demo only. Start simulated monitors, choose synthetic or real recorded data, and inject episodes.
 - **Privacy ledger:** see every access; *Verify integrity* checks the hash chain and signatures.
 - **Keys & algorithms:** key versions and fingerprints. Rotate with `python scripts/rotate_master_key.py`.
@@ -18,12 +18,13 @@
 ## Clinician
 - **Worklist:** patients sorted by urgency. A red banner means a critical alert has waited more than 15 minutes (escalated).
 - **Patient record:** live vitals, trends (6 h raw, 24 h / 7 d summarised), the AI early-warning panel with reasons, and alerts. *Acknowledge* with an optional note (stored encrypted).
-- **Pair device:** create a code and enter it on the patient's device. **Import past readings:** upload a CSV from another system (`timestamp,hr,spo2,sbp,dbp,temp,rr`).
+- **Connect device** (patient record → Devices): choose what you are connecting, name it, then scan the QR code or type the code on the gateway. The window confirms when readings arrive, and each device shows its status (Receiving readings, No recent readings, …). See **Device guide** in the sidebar. **Import past readings:** upload a CSV from another system (`timestamp,hr,spo2,sbp,dbp,temp,rr`).
 - **Account:** change your password, or create new recovery codes.
 - Lost your phone? On the sign-in code screen choose *Use a recovery code*.
 
 ## Patient
 - **My health:** your latest readings, trends and alerts.
 - **Sharing:** *Pause sharing* stops uploads and blocks your care team; *Resume* turns it back on.
+- **Help with devices:** which devices work, tips for using them, and what to do if readings stop.
 - **Download my data:** everything held about you, as a JSON file.
 - New accounts must choose their own password at first sign-in.

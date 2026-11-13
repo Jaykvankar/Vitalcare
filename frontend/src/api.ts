@@ -102,6 +102,8 @@ export function sourceInfo(source: string | undefined): { kind: "real" | "synthe
   if (!source || source === "none" || source === "unknown") return { kind: "none", label: "No device", detail: "No paired device" };
   if (source.startsWith("mimic:"))
     return { kind: "real", label: "Real data replay", detail: `MIMIC-III ICU stay ${source.split(":")[1]} (de-identified)` };
+  if (source.startsWith("eicu:"))
+    return { kind: "real", label: "Real data replay", detail: `eICU ICU stay ${source.split(":")[1]} (de-identified, 5-minute vitals; temperature shows 36.9 °C when it was not charted)` };
   if (source.startsWith("bidmc:"))
     return { kind: "real", label: "Real data replay", detail: `BIDMC record ${source.split(":")[1]} · HR/SpO₂/RR real, BP/temp not recorded` };
   return { kind: "synthetic", label: "Synthetic data", detail: "Generated vital signs" };
@@ -115,10 +117,59 @@ export interface DeviceRow {
   paired_at: string | null;
   paired_by: string;
   revoked_at: string | null;
+  kind: "device" | "import";
+  device_type: string | null;
+}
+
+/** One entry of the device catalog served by /api/devices/catalog (backend/app/device_catalog.py). */
+export interface DeviceType {
+  id: string;
+  name: string;
+  icon: string;
+  measures: string[];
+  connects_through: string;
+  status: "ready" | "needs_adapter" | "needs_integration";
+  admin_only: boolean;
+  default_label: string;
+  what_you_need: string[];
+  how_to_connect: string[];
+  patient_tips: string[];
+}
+
+export const DEVICE_STATUS_LABEL: Record<DeviceType["status"], string> = {
+  ready: "Ready to use",
+  needs_adapter: "Needs gateway adapter",
+  needs_integration: "Needs hospital IT",
+};
+
+export type Connection = "receiving" | "recent" | "quiet" | "never" | "revoked";
+
+/** How a paired device is doing, from the time of its last reading. */
+export function connectionOf(d: { active: boolean; last_seen: string | null }, now = Date.now()): Connection {
+  if (!d.active) return "revoked";
+  if (!d.last_seen) return "never";
+  const age = (now - new Date(d.last_seen).getTime()) / 1000;
+  if (age <= 120) return "receiving";
+  if (age <= 600) return "recent";
+  return "quiet";
+}
+
+export const CONNECTION_LABEL: Record<Connection, string> = {
+  receiving: "Receiving readings",
+  recent: "Recently active",
+  quiet: "No recent readings",
+  never: "Not connected yet",
+  revoked: "Revoked",
+};
+
+/** The text inside the pairing QR code; scripts/device_client.py pair --link reads it. */
+export function pairingLink(server: string, pairingId: string, code: string): string {
+  const q = new URLSearchParams({ server, id: pairingId, code });
+  return `vitalcare-pair:v1?${q.toString()}`;
 }
 
 export interface PatientProfile extends PatientSummary {
-  devices: { id: string; label: string; active: boolean; last_seen: string | null }[];
+  devices: { id: string; label: string; active: boolean; last_seen: string | null; device_type: string | null }[];
   consent_changed_at: string;
   dob?: string | null;
   phone?: string | null;

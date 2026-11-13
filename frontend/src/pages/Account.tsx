@@ -5,10 +5,10 @@ import { Icon } from "../components/Icons";
 
 export function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone?: () => void }) {
   const download = () => {
-    const blob = new Blob([`SecureRPM recovery codes\nEach code works once.\n\n${codes.join("\n")}\n`], { type: "text/plain" });
+    const blob = new Blob([`Vitalcare recovery codes\nEach code works once.\n\n${codes.join("\n")}\n`], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "securerpm-recovery-codes.txt";
+    a.download = "vitalcare-recovery-codes.txt";
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -76,7 +76,7 @@ export function ForcedPasswordChange() {
   return (
     <div className="login">
       <section className="login-art">
-        <div className="side-brand"><span className="mark"><Icon.Logo size={18} /></span><span className="name">SecureRPM</span></div>
+        <div className="side-brand"><span className="mark"><Icon.Logo size={18} /></span><span className="name">Vitalcare</span></div>
         <div className="pitch"><h1>Welcome, {me?.full_name.split(" ")[0]}.</h1><p>One quick step before you start.</p></div>
       </section>
       <section className="login-form">

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertItem, api, ApiError, Band, DeviceRow, PatientProfile, Point, Readings, REASON_LABELS, sourceInfo, timeAgo } from "../api";
-import { useAuth } from "../App";
-import { usePolling } from "../hooks";
+import { AlertItem, api, Band, CONNECTION_LABEL, connectionOf, DeviceRow, PatientProfile, Point, Readings, REASON_LABELS, sourceInfo, timeAgo } from "../api";
+import { Link } from "react-router-dom";
+import { useDeviceCatalog, usePolling } from "../hooks";
+import { ConnectDevice, DeviceIcon } from "./ConnectDevice";
 import { Icon, initials } from "./Icons";
 
 export function BandBadge({ band }: { band: Band }) {
@@ -289,136 +290,75 @@ export function AlertList({ patientId, canAck }: { patientId: number; canAck: bo
   );
 }
 
-/* ---------------------------------------------------------------- devices + pairing */
+/* ---------------------------------------------------------------- devices */
 
-export function PairModal({ patientId, patientName, onClose }: { patientId: number; patientName: string; onClose: () => void }) {
-  const [label, setLabel] = useState("Wearable monitor");
-  const [issued, setIssued] = useState<{ pairing_id: string; code: string; expires_at: string } | null>(null);
-  const [status, setStatus] = useState("waiting");
-  const [err, setErr] = useState("");
-  const [now, setNow] = useState(Date.now());
-  const { me } = useAuth();
-
-  useEffect(() => {
-    if (!issued || status !== "waiting") return;
-    const id = window.setInterval(async () => {
-      setNow(Date.now());
-      try {
-        const s = await api<{ status: string }>(`/api/devices/pairing-codes/${issued.pairing_id}`);
-        setStatus(s.status);
-      } catch {
-        /* keep polling */
-      }
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [issued, status]);
-
-  const issue = async () => {
-    setErr("");
-    try {
-      setIssued(await api("/api/devices/pairing-codes", { method: "POST", body: { patient_id: patientId, label } }));
-      setStatus("waiting");
-    } catch (e) {
-      setErr((e as ApiError).message);
-    }
-  };
-  const simulate = async () => {
-    if (!issued) return;
-    setErr("");
-    try {
-      await api("/api/admin/simulator/pair", { method: "POST", body: { pairing_id: issued.pairing_id, code: issued.code, source: "synthetic" } });
-      setStatus("paired");
-    } catch (e) {
-      setErr((e as ApiError).message);
-    }
-  };
-  const left = issued ? Math.max(0, Math.round((new Date(issued.expires_at).getTime() - now) / 1000)) : 0;
-
-  return (
-    <div className="backdrop" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pair-title" onClick={(e) => e.stopPropagation()}>
-        <div className="card-head">
-          <div>
-            <h2 id="pair-title">Pair a device</h2>
-            <div className="sub">for {patientName}</div>
-          </div>
-          <button className="btn ghost sm" aria-label="Close" onClick={onClose}><Icon.X size={16} /></button>
-        </div>
-        <div className="card-body form">
-          {!issued ? (
-            <>
-              <label className="field">
-                Device name
-                <input value={label} maxLength={64} onChange={(e) => setLabel(e.target.value)} />
-              </label>
-              <ol className="steps">
-                <li>We create a one-time code that expires in 10 minutes.</li>
-                <li>Enter it on the device. The device makes its own RSA-3072 key and proves it knows the code (HMAC-SHA-512). The code itself is never sent.</li>
-                <li>Only the device's public key is stored. You can revoke it at any time.</li>
-              </ol>
-              {err && <div className="notice error">{err}</div>}
-              <button className="btn primary" onClick={issue}><Icon.Key size={16} /> Create pairing code</button>
-            </>
-          ) : status === "paired" ? (
-            <div className="notice success"><Icon.Check size={18} /> Device paired. It now appears in the device list and can send encrypted readings.</div>
-          ) : (
-            <>
-              <div className="pair-code" aria-label="Pairing code">{issued.code}</div>
-              <div className="row small">
-                <span className="muted">Pairing ID <code>{issued.pairing_id}</code></span>
-                <span className="spacer" />
-                <span className={status === "waiting" && left > 0 ? "muted" : "crit-text"}>
-                  {status === "waiting" && left > 0 ? `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : status === "locked" ? "Locked after wrong attempts" : "Expired"}
-                </span>
-              </div>
-              <div className="notice info">Waiting for the device… On a real device, run <code>scripts/device_client.py pair</code> with this ID and code.</div>
-              {me?.role === "admin" && status === "waiting" && (
-                <button className="btn secondary" onClick={simulate}><Icon.Play size={16} /> Use the built-in simulator as this device</button>
-              )}
-              {err && <div className="notice error">{err}</div>}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+export function ConnectionPill({ device }: { device: { active: boolean; last_seen: string | null } }) {
+  const c = connectionOf(device);
+  const cls = c === "receiving" ? "tag ok" : c === "quiet" ? "tag warn" : c === "revoked" ? "tag danger" : "tag";
+  return <span className={cls}>{CONNECTION_LABEL[c]}</span>;
 }
 
 export function DevicesCard({ patientId, patientName, canManage }: { patientId: number; patientName: string; canManage: boolean }) {
   const { data, reload } = usePolling<DeviceRow[]>(canManage ? `/api/devices?patient_id=${patientId}` : null, 10000);
-  const [pairing, setPairing] = useState(false);
+  const catalog = useDeviceCatalog();
+  const [connecting, setConnecting] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const revoke = async (id: string) => {
-    if (!confirm("Revoke this device? It will no longer be able to send readings.")) return;
     await api(`/api/devices/${id}/revoke`, { method: "POST" });
+    setConfirmRevoke(null);
     reload();
   };
   if (!canManage) return null;
+  const devices = data?.filter((d) => d.kind !== "import") ?? [];
+  const imports = data?.filter((d) => d.kind === "import") ?? [];
+  const typeOf = (id: string | null) => catalog?.find((t) => t.id === id);
   return (
     <div className="card">
       <div className="card-head">
         <div>
           <h2>Devices</h2>
-          <div className="sub">Signed with each device's own key</div>
+          <div className="sub">What sends readings for this patient</div>
         </div>
-        <button className="btn secondary sm" onClick={() => setPairing(true)}><Icon.Plus size={15} /> Pair device</button>
+        <button className="btn secondary sm" onClick={() => setConnecting(true)}><Icon.Plus size={15} /> Connect device</button>
       </div>
       <div className="card-body">
-        {!data ? <div className="muted small">Loading…</div> : data.length === 0 ? <div className="muted small">No devices yet.</div> : (
+        {!data ? <div className="muted small">Loading…</div> : devices.length === 0 ? (
+          <div className="empty-inline">
+            <p className="muted small">No device is connected yet.</p>
+            <button className="btn primary sm" onClick={() => setConnecting(true)}>Connect the first device</button>
+          </div>
+        ) : (
           <ul className="device-list">
-            {data.map((d) => (
-              <li key={d.id}>
-                <span className="ico"><Icon.Watch size={17} /></span>
-                <div className="info">
-                  <b>{d.label} {!d.active && <span className="tag danger">Revoked</span>}</b>
-                  <span>{d.id} · paired by {d.paired_by} · seen {timeAgo(d.last_seen)}</span>
-                </div>
-                {d.active && <button className="btn ghost sm" onClick={() => revoke(d.id)}>Revoke</button>}
-              </li>
-            ))}
+            {devices.map((d) => {
+              const t = typeOf(d.device_type);
+              return (
+                <li key={d.id}>
+                  <span className="ico"><DeviceIcon name={t?.icon} size={17} /></span>
+                  <div className="info">
+                    <b>{d.label}</b>
+                    <span>{t ? t.name : "Device"} · last reading {timeAgo(d.last_seen)} · added by {d.paired_by}</span>
+                    <span className="pill-row"><ConnectionPill device={d} /></span>
+                  </div>
+                  {d.active && (confirmRevoke === d.id ? (
+                    <span className="row">
+                      <button className="btn danger sm" onClick={() => revoke(d.id)}>Revoke now</button>
+                      <button className="btn ghost sm" onClick={() => setConfirmRevoke(null)}>Keep</button>
+                    </span>
+                  ) : (
+                    <button className="btn ghost sm" onClick={() => setConfirmRevoke(d.id)} title="Stop this device sending readings">Revoke</button>
+                  ))}
+                </li>
+              );
+            })}
           </ul>
         )}
+        {confirmRevoke && <p className="muted xs" role="status">Revoking stops this device immediately. Use it if a device is lost, stolen or replaced.</p>}
+        {imports.length > 0 && (
+          <p className="muted xs" style={{ marginTop: 10 }}>Also: {imports.length} imported history file{imports.length === 1 ? "" : "s"} (past readings, not a live device).</p>
+        )}
+        <p className="muted xs" style={{ marginTop: 10 }}><Link to="/devices/guide">Which devices can be connected?</Link></p>
       </div>
-      {pairing && <PairModal patientId={patientId} patientName={patientName} onClose={() => { setPairing(false); reload(); }} />}
+      {connecting && <ConnectDevice patientId={patientId} patientName={patientName} onClose={() => { setConnecting(false); reload(); }} />}
     </div>
   );
 }

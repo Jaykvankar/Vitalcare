@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vitalcare Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one reading column with full-width diagram bands; the app's own navy + clinical green palette. */
+:root {
+  --bg: #f4f6f6;
+  --surface: #ffffff;
+  --surface-2: #eef2f1;
+  --line: #d9e1df;
+  --ink: #12202b;
+  --ink-2: #3b4b57;
+  --muted: #687985;
+  --accent: #23705d;
+  --accent-soft: #e2f0eb;
+  --navy: #11283a;
+  --navy-ink: #e8eff4;
+  --blue: #3756a6;
+  --blue-soft: #e8eefb;
+  --warn: #9a5a08;
+  --warn-soft: #fbf0dc;
+  --crit: #b42323;
+  --crit-soft: #fbe9e8;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c1217; --surface: #121b22; --surface-2: #17222b; --line: #24323d; --ink: #e5ecf1; --ink-2: #c1ccd5;
+    --muted: #8b9ba8; --accent: #4fb69a; --accent-soft: #14302a; --navy: #0a141c; --navy-ink: #e1e9ef;
+    --blue: #9bb2f2; --blue-soft: #17223a; --warn: #f0b453; --warn-soft: #2c2312; --crit: #f47b7b; --crit-soft: #321819;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c1217; --surface: #121b22; --surface-2: #17222b; --line: #24323d; --ink: #e5ecf1; --ink-2: #c1ccd5;
+  --muted: #8b9ba8; --accent: #4fb69a; --accent-soft: #14302a; --navy: #0a141c; --navy-ink: #e1e9ef;
+  --blue: #9bb2f2; --blue-soft: #17223a; --warn: #f0b453; --warn-soft: #2c2312; --crit: #f47b7b; --crit-soft: #321819;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.6 var(--font); margin: 0; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 0 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { text-wrap: balance; letter-spacing: -0.015em; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.15; font-weight: 700; }
+h2 { font-size: 1.5rem; line-height: 1.25; font-weight: 650; }
+h3 { font-size: 1.02rem; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+a { color: var(--accent); }
+.eyebrow { font: 600 0.72rem/1 var(--font); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 0.86rem; }
+
+/* masthead */
+.mast { background: var(--navy); color: var(--navy-ink); }
+.mast .inner { max-width: 1080px; margin: 0 auto; padding-block: 44px 36px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 18px; }
+.mast .eyebrow { color: #6fcdb1; }
+.mast p { color: #a9bccb; font-size: 1.05rem; }
+.trace { color: #4fb69a; opacity: 0.55; width: 100%; height: 46px; display: block; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.86rem; color: #c8d6e1; }
+.facts b { color: #fff; font-weight: 600; }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; padding-block: 18px; border-bottom: 1px solid var(--line); }
+nav.toc a { text-decoration: none; color: var(--ink-2); font-size: 0.88rem; font-weight: 500; padding: 6px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+section { display: grid; gap: 18px; padding-block: 52px 8px; scroll-margin-top: 12px; }
+.lede { color: var(--ink-2); font-size: 1.03rem; }
+
+/* diagram */
+.diagram-band { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.diagram-scroll { overflow-x: auto; }
+.diagram-scroll svg { display: block; min-width: 780px; width: 100%; height: auto; }
+svg .node rect { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.5; transition: fill .2s, stroke .2s; }
+svg .node text { fill: var(--ink); font-family: var(--font); }
+svg .node .sub { fill: var(--muted); font-size: 11px; }
+svg .node { cursor: pointer; }
+svg .node:focus { outline: none; }
+svg .node:focus rect, svg .node:hover rect { stroke: var(--accent); }
+svg .node.on rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2.2; }
+svg .node.sel rect { stroke: var(--ink); stroke-width: 2.4; }
+svg .edge path { fill: none; stroke: var(--line); stroke-width: 2; transition: stroke .2s; }
+svg .edge text { fill: var(--muted); font: 500 10.5px var(--mono); }
+svg .edge.on path { stroke: var(--accent); stroke-width: 2.6; }
+svg .edge.on text { fill: var(--accent); }
+svg .zone { fill: none; stroke: var(--line); stroke-dasharray: 4 5; }
+svg .zone-label { fill: var(--muted); font: 600 10px var(--font); letter-spacing: .12em; text-transform: uppercase; }
+svg marker path { fill: var(--muted); }
+.detail { border-top: 1px solid var(--line); padding: 18px 20px; display: grid; gap: 10px; min-height: 150px; }
+.detail .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-block; font: 500 0.76rem/1.5 var(--mono); padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
+.chip.algo { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.hint { font-size: 0.82rem; color: var(--muted); }
+
+/* steppers */
+.stepper { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; grid-template-columns: 250px 1fr; overflow: hidden; }
+.steps { list-style: none; margin: 0; padding: 10px; border-right: 1px solid var(--line); background: var(--surface-2); display: grid; gap: 2px; align-content: start; }
+.steps button { width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink-2); font: 500 0.88rem/1.35 var(--font); padding: 9px 10px; border-radius: 8px; cursor: pointer; display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: start; }
+.steps button .n { font: 500 0.75rem var(--mono); color: var(--muted); padding-top: 2px; }
+.steps button:hover { background: var(--surface); }
+.steps button[aria-current="step"] { background: var(--surface); color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+.steps button:focus-visible, .ctrl button:focus-visible, nav.toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pane { padding: 22px 24px; display: grid; gap: 14px; min-width: 0; align-content: start; }
+.who { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.role { font: 600 0.7rem/1 var(--font); letter-spacing: .1em; text-transform: uppercase; padding: 5px 8px; border-radius: 6px; background: var(--blue-soft); color: var(--blue); }
+.role.device { background: var(--accent-soft); color: var(--accent); }
+.role.server { background: var(--surface-2); color: var(--ink-2); }
+.role.patient { background: var(--warn-soft); color: var(--warn); }
+pre.block { margin: 0; background: var(--navy); color: #d5e2ec; border-radius: 8px; padding: 14px 16px; overflow-x: auto; font: 0.8rem/1.55 var(--mono); }
+pre.block .k { color: #6fcdb1; }
+pre.block .c { color: #7f93a3; }
+.ctrl { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 14px; }
+.ctrl button { font: 600 0.86rem var(--font); padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.ctrl button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+:root[data-theme="dark"] .ctrl button.primary { color: #06231c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ctrl button.primary { color: #06231c; } }
+.ctrl button:disabled { opacity: .4; cursor: default; }
+.bullets { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
+.mini-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.mini-table th, .mini-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.mini-table th { color: var(--muted); font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: .06em; }
+.ok { color: var(--accent); font-weight: 600; }
+.bad { color: var(--crit); font-weight: 600; }
+.pill { font: 600 0.72rem/1 var(--font); padding: 4px 8px; border-radius: 999px; }
+.pill.open { background: var(--accent-soft); color: var(--accent); }
+.pill.cred { background: var(--warn-soft); color: var(--warn); }
+.pill.req { background: var(--crit-soft); color: var(--crit); }
+
+/* tables */
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table.data { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 680px; }
+table.data th { text-align: left; font-size: 0.72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+table.data td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.data tr:last-child td { border-bottom: 0; }
+table.data td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.metric { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.metric div { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.metric b { display: block; font-size: 1.35rem; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.metric span { font-size: 0.78rem; color: var(--muted); }
+.verdict { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; color: var(--ink-2); }
+footer { padding-block: 48px 0; color: var(--muted); font-size: 0.84rem; border-top: 1px solid var(--line); margin-top: 48px; }
+
+@media (max-width: 760px) {
+  .stepper { grid-template-columns: 1fr; }
+  .steps { border-right: 0; border-bottom: 1px solid var(--line); grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; }
+  .two, .metric { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="inner">
+    <span class="eyebrow">Semester project · system walkthrough · open this file in any browser</span>
+    <h1>Vitalcare: how it is built and how a hospital uses it</h1>
+    <p>Remote patient monitoring where every vital sign is encrypted on the device, scored by rules and an AI model on arrival, stored under a key that belongs to that one patient, and opened only for the care team the patient has consented to.</p>
+    <svg class="trace" viewBox="0 0 600 46" preserveAspectRatio="none" aria-hidden="true"><path d="M0 23 H190 L206 9 L224 40 L244 4 L262 23 H600" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>
+    <div class="facts">
+      <span><b>FastAPI</b> backend · <b>React</b> web app</span>
+      <span><b>SQLite</b> or <b>PostgreSQL</b></span>
+      <span>Real data: <b>eICU</b> (186 hospitals) · <b>MIMIC-III</b> · <b>BIDMC</b></span>
+      <span>Crypto: <b>AES-256-GCM · DH ffdhe3072 · RSA-3072 · ECDSA P-384 · SHA-512</b></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <nav class="toc" aria-label="Sections">
+    <a href="#map">System map</a>
+    <a href="#reading">Follow one reading</a>
+    <a href="#hospital">A new hospital goes live</a>
+    <a href="#data">Data we use</a>
+    <a href="#eicu">eICU across hospitals</a>
+    <a href="#demo">Run the demo</a>
+  </nav>
+
+  <!-- ============================================================ MAP -->
+  <section id="map">
+    <span class="eyebrow">Architecture</span>
+    <h2>System map</h2>
+    <p class="lede">Eleven parts in three zones. Arrows show which way data moves. Select any box to see what it does, which files implement it and which algorithms it uses.</p>
+    <div class="diagram-band">
+      <div class="diagram-scroll">
+        <svg id="arch" viewBox="0 0 1000 500" role="group" aria-label="Architecture diagram">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"/></marker>
+          </defs>
+          <rect class="zone" x="8" y="22" width="176" height="456" rx="10"/>
+          <text class="zone-label" x="20" y="40">Patient side</text>
+          <rect class="zone" x="198" y="22" width="590" height="456" rx="10"/>
+          <text class="zone-label" x="210" y="40">Vitalcare server</text>
+          <rect class="zone" x="802" y="22" width="190" height="456" rx="10"/>
+          <text class="zone-label" x="814" y="40">Storage &amp; people</text>
+
+          <!-- edges -->
+          <g class="edge" data-edge="dev-pair"><path d="M97 215 V111 H218" marker-end="url(#arr)"/><text x="104" y="102">pair: HMAC proof</text></g>
+          <g class="edge" data-edge="dev-ingest"><path d="M174 250 H218" marker-end="url(#arr)"/><text x="22" y="304">sealed + signed reading</text></g>
+          <g class="edge" data-edge="ingest-risk"><path d="M390 250 H416" marker-end="url(#arr)"/></g>
+          <g class="edge" data-edge="risk-crypto"><path d="M586 252 H612" marker-end="url(#arr)"/></g>
+          <g class="edge" data-edge="crypto-db"><path d="M778 252 H822" marker-end="url(#arr)"/></g>
+          <g class="edge" data-edge="pair-db"><path d="M390 111 H900 V213" marker-end="url(#arr)"/><text x="580" y="102">device public key stored</text></g>
+          <g class="edge" data-edge="web-api"><path d="M822 395 H796 V173 H780" marker-end="url(#arr)"/><text x="626" y="140">session + TOTP</text></g>
+          <g class="edge" data-edge="api-crypto"><path d="M690 196 V220" marker-end="url(#arr)"/></g>
+          <g class="edge" data-edge="ingest-ledger"><path d="M304 285 V392 H612" marker-end="url(#arr)"/><text x="312" y="383">rejections</text></g>
+          <g class="edge" data-edge="api-ledger"><path d="M612 175 H600 V376 H612" marker-end="url(#arr)"/><text x="508" y="330">every decrypt</text></g>
+          <g class="edge" data-edge="ledger-db"><path d="M778 408 H810 V276 H822" marker-end="url(#arr)"/></g>
+          <g class="edge" data-edge="keys-crypto"><path d="M824 323 H740 V284" marker-end="url(#arr)"/><text x="660" y="318">unwrap keys</text></g>
+          <g class="edge" data-edge="jobs-db"><path d="M586 443 H816 V280 H822" marker-end="url(#arr)"/><text x="630" y="436">escalate · purge</text></g>
+
+          <!-- nodes -->
+          <g class="node" data-id="device" tabindex="0" role="button" aria-label="Device or gateway"><rect x="20" y="215" width="154" height="70" rx="9"/><text x="34" y="244" font-size="14" font-weight="600">Device / gateway</text><text class="sub" x="34" y="263">own RSA-3072 key</text></g>
+          <g class="node" data-id="pairing" tabindex="0" role="button" aria-label="Pairing"><rect x="220" y="80" width="170" height="62" rx="9"/><text x="234" y="106" font-size="14" font-weight="600">Pairing</text><text class="sub" x="234" y="125">one-time code, 10 min</text></g>
+          <g class="node" data-id="ingest" tabindex="0" role="button" aria-label="Ingest"><rect x="220" y="215" width="170" height="70" rx="9"/><text x="234" y="244" font-size="14" font-weight="600">Ingest</text><text class="sub" x="234" y="263">verify · anti-replay · unseal</text></g>
+          <g class="node" data-id="risk" tabindex="0" role="button" aria-label="Risk engine"><rect x="418" y="215" width="168" height="70" rx="9"/><text x="432" y="244" font-size="14" font-weight="600">Risk engine</text><text class="sub" x="432" y="263">rules · NEWS2 · AI model</text></g>
+          <g class="node" data-id="api" tabindex="0" role="button" aria-label="API and access control"><rect x="614" y="150" width="164" height="46" rx="9"/><text x="628" y="178" font-size="14" font-weight="600">API · auth · RBAC</text></g>
+          <g class="node" data-id="crypto" tabindex="0" role="button" aria-label="Envelope encryption"><rect x="614" y="222" width="164" height="60" rx="9"/><text x="628" y="246" font-size="14" font-weight="600">Envelope crypto</text><text class="sub" x="628" y="265">per-patient AES key</text></g>
+          <g class="node" data-id="ledger" tabindex="0" role="button" aria-label="Privacy ledger"><rect x="614" y="378" width="164" height="60" rx="9"/><text x="628" y="402" font-size="14" font-weight="600">Privacy ledger</text><text class="sub" x="628" y="421">SHA-512 chain + ECDSA</text></g>
+          <g class="node" data-id="jobs" tabindex="0" role="button" aria-label="Background jobs"><rect x="418" y="420" width="168" height="46" rx="9"/><text x="432" y="448" font-size="14" font-weight="600">Background jobs</text></g>
+          <g class="node" data-id="db" tabindex="0" role="button" aria-label="Database"><rect x="824" y="215" width="156" height="70" rx="9"/><text x="838" y="244" font-size="14" font-weight="600">Database</text><text class="sub" x="838" y="263">SQLite / PostgreSQL</text></g>
+          <g class="node" data-id="secrets" tabindex="0" role="button" aria-label="Key store"><rect x="824" y="296" width="156" height="58" rx="9"/><text x="838" y="320" font-size="14" font-weight="600">Key store</text><text class="sub" x="838" y="339">master key · server keys</text></g>
+          <g class="node" data-id="web" tabindex="0" role="button" aria-label="Web app"><rect x="824" y="366" width="156" height="70" rx="9"/><text x="838" y="394" font-size="14" font-weight="600">Web app</text><text class="sub" x="838" y="413">patient · clinician · admin</text></g>
+        </svg>
+      </div>
+      <div class="detail" id="detail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ READING -->
+  <section id="reading">
+    <span class="eyebrow">Live data path</span>
+    <h2>Follow one reading from the wrist to the clinician</h2>
+    <p class="lede">What happens to a single heart-rate and oxygen reading, step by step. The highlighted parts of the system map above follow along.</p>
+    <div class="stepper" id="readingStepper"></div>
+  </section>
+
+  <!-- ============================================================ HOSPITAL -->
+  <section id="hospital">
+    <span class="eyebrow">Onboarding</span>
+    <h2>A new hospital goes live</h2>
+    <p class="lede">From an empty server to monitored patients, using only what is built today. Each step names who does it and what they run or click.</p>
+    <div class="stepper" id="hospitalStepper"></div>
+  </section>
+
+  <!-- ============================================================ DATA -->
+  <section id="data">
+    <span class="eyebrow">Data</span>
+    <h2>What data the project uses</h2>
+    <p class="lede">The live AI model learns from synthetic data because no open dataset marks the minute a patient started to deteriorate. Three real, de-identified datasets are used to test the system honestly and to replay real patients through the encrypted pipeline.</p>
+    <div class="tablewrap">
+      <table class="data">
+        <thead><tr><th>Source</th><th>What is in it</th><th>Used for</th><th>Size</th><th>Access</th></tr></thead>
+        <tbody>
+          <tr><td><b>Synthetic generator</b><br><span class="small muted"><code>ml/synth.py</code></span></td><td>Generated vital signs for 200 patient-days with hypoxia, tachycardia, hypotension and fever episodes, plus harmless activity spikes</td><td>Training the model (160 patients), testing it (40 different patients), live demo streams</td><td class="num">288,000 readings</td><td><span class="pill open">Built in</span></td></tr>
+          <tr><td><b>eICU Collaborative Research Database Demo</b><br><span class="small muted">PhysioNet v2.0.1</span></td><td>2,520 de-identified ICU stays from 186 US hospitals; heart rate, SpO₂, breathing rate every 5 minutes, arterial and cuff blood pressure, hospital outcome and hospital type. Temperature is rarely charted in these tables.</td><td>Hospital-by-hospital evaluation; replaying real ICU stays (two demo patients)</td><td class="num">≈22 MB download · 2,048 usable stays · 1.21 M rows</td><td><span class="pill open">Open · ODbL</span></td></tr>
+          <tr><td><b>MIMIC-III Clinical Demo</b><br><span class="small muted">PhysioNet v1.4</span></td><td>100 de-identified ICU patients; charted heart rate, SpO₂, breathing rate, blood pressure, temperature; in-hospital outcome</td><td>Real-data evaluation; replaying a real ICU stay through a simulated monitor</td><td class="num">≈77 MB · 128 stays</td><td><span class="pill open">Open · ODbL</span></td></tr>
+          <tr><td><b>BIDMC PPG &amp; Respiration</b><br><span class="small muted">PhysioNet v1.0.0</span></td><td>53 ICU recordings, 8 minutes each at 1 Hz; heart rate, SpO₂, breathing rate only</td><td>Testing the rules on real second-by-second variability; replay</td><td class="num">≈0.5 MB · 473 min</td><td><span class="pill open">Open · ODC-BY</span></td></tr>
+          <tr><td><b>Hospital's own data</b></td><td>Their staff list, patients, past vital signs (CSV), then live readings from paired devices</td><td>Running the service</td><td class="num">Up to 500 people / 20,000 readings per file</td><td><span class="pill req">Hospital-owned</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="two">
+      <div class="panel">
+        <h3>Synthetic test patients (40, unseen in training)</h3>
+        <div class="metric">
+          <div><b>100%</b><span>episodes caught (rules alone 97.8%)</span></div>
+          <div><b>7 min</b><span>median to first alarm (rules alone 12)</span></div>
+          <div><b>0.07</b><span>false critical alarms per patient-day</span></div>
+        </div>
+        <p class="small muted">Shows the pipeline works. Synthetic numbers say nothing about real patients.</p>
+      </div>
+      <div class="panel">
+        <h3>Real ICU patients (MIMIC-III demo, 100 stays, 32 deaths)</h3>
+        <div class="metric">
+          <div><b>0.62</b><span>model AUROC for later death, first 24 h</span></div>
+          <div><b>0.53</b><span>NEWS2 AUROC, first 24 h</span></div>
+          <div><b>1.0</b><span>critical alert per patient-day</span></div>
+        </div>
+        <p class="small muted">The model adds an early signal NEWS2 misses, but 0.62 is weak and 100 stays leave about ±0.1 of uncertainty. Not clinically useful yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ EICU -->
+  <section id="eicu">
+    <span class="eyebrow">Real data across many hospitals</span>
+    <h2>eICU: does it work at hospitals it has never seen?</h2>
+    <p class="lede">The eICU demo is now part of the project. Its stays come from 186 different hospitals and record vitals every 5 minutes, close to how a wearable reports. That lets us test the question every new hospital will ask: does a model built elsewhere work here?</p>
+    <div class="panel">
+      <h3>First 24 hours of 2,032 real ICU stays: who later died in hospital? (AUROC, 0.5 = chance)</h3>
+      <div class="tablewrap" style="border:0">
+        <table class="data">
+          <thead><tr><th>Signal</th><th>All stays pooled</th><th>Held-out hospitals (5 folds, mean ± SD)</th><th>Trained on</th></tr></thead>
+          <tbody>
+            <tr><td><b>Model trained on real eICU data</b></td><td class="num">–</td><td class="num"><b>0.760 ± 0.052</b></td><td>Other hospitals only</td></tr>
+            <tr><td>NEWS2 (clinical score)</td><td class="num">0.734</td><td class="num">0.732 ± 0.055</td><td>No training</td></tr>
+            <tr><td>Live app model</td><td class="num">0.687</td><td class="num">0.684 ± 0.060</td><td>Synthetic data</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="bullets small">
+        <li>On real multi-hospital data, NEWS2 beats the synthetic-trained model. The synthetic model only came out ahead on the small MIMIC set.</li>
+        <li>A simple model trained on real data from other hospitals does best on hospitals it never saw. Retraining on real data is the clear next step.</li>
+        <li>At 5-minute resolution there are 3.8 critical alerts per patient-day in these ICU patients: too many for a ward without tuning (alarm fatigue).</li>
+        <li>Temperature was charted for only 157 of the 2,048 stays. Elsewhere it is held at 36.9 °C, so fever rules cannot fire for those patients.</li>
+      </ul>
+      <p class="small muted">Full numbers, including results by region and teaching status: <code>docs/real_data_report.md</code> (regenerate with <code>python -m app.ml.eval_real</code>).</p>
+    </div>
+    <div class="tablewrap">
+      <table class="data">
+        <thead><tr><th>Bigger datasets for later</th><th>Scale</th><th>Access</th><th>What it would add</th></tr></thead>
+        <tbody>
+          <tr><td><b>eICU-CRD</b> v2.0 (full)</td><td class="num">200,000+ admissions<br>208 US hospitals</td><td><span class="pill cred">Credentialed</span><br><span class="small muted">CITI course + data use agreement, per person</span></td><td>Enough patients to retrain on real outcomes and report every hospital separately</td></tr>
+          <tr><td><b>MIMIC-IV</b> (full)</td><td class="num">≈300,000 patients</td><td><span class="pill cred">Credentialed</span></td><td>Large single-hospital training set with detailed outcomes</td></tr>
+          <tr><td><b>MIMIC-IV Demo</b> v2.2</td><td class="num">100 patients · ≈15 MB</td><td><span class="pill open">Open · ODbL</span></td><td>Newer schema than MIMIC-III, same small scale</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>About "big data" and BigQuery</h3>
+      <p class="small">Once a PhysioNet account is approved for credentialed data, the full eICU and MIMIC-IV can be queried in Google BigQuery, so only the needed vital-sign rows are exported instead of downloading tens of GB. Credentialing is personal (CITI "Data or Specimens Only Research" course plus a signed data use agreement). That data must never be shared or committed; <code>.gitignore</code> already excludes <code>data/real/</code>.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ DEMO -->
+  <section id="demo">
+    <span class="eyebrow">Try it</span>
+    <h2>Run the working demo</h2>
+    <p class="lede">One command takes a fresh checkout to a running system with four monitored patients. Two replay real eICU stays from different hospitals, one replays a MIMIC-III stay, and one is synthetic so you can inject a deterioration on demand.</p>
+    <pre class="block">.venv\Scripts\python demo.py            <span class="c"># http://localhost:8000, monitors start streaming</span>
+.venv\Scripts\python scripts\totp_code.py dr.mehta   <span class="c"># 6-digit code for staff sign-in</span></pre>
+    <div class="two">
+      <div class="panel">
+        <h3>Five-minute walkthrough</h3>
+        <ul class="bullets small">
+          <li><b>dr.mehta:</b> the worklist is ranked by urgency. Open the top patient to see the AI explanation, trends and alerts. Acknowledge one with a note.</li>
+          <li><b>admin:</b> Data sources lets you switch a monitor to another real ICU stay or inject a hypoxia episode. Bulk import onboards staff from a CSV. The privacy ledger verifies itself.</li>
+          <li><b>p.iyer:</b> sees only her own data, can pause sharing and download everything held about her.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Where things are</h3>
+        <ul class="bullets small">
+          <li>Passwords: <code>seed_credentials.txt</code> (not committed)</li>
+          <li>Hospital setup and real devices: <code>docs/HANDOFF.md</code></li>
+          <li>Security analysis: <code>docs/threat_model.md</code></li>
+          <li>Viva answers: <code>docs/viva_defense.md</code></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Vitalcare is an educational project, not a certified medical device. All patient names are fictional; real vital signs come only from de-identified open datasets.
+  </footer>
+</main>
+
+<script>
+(() => {
+  // ------------------------------------------------------------ component details
+  const C = {
+    device: { t: "Device or gateway", d: "A wearable, or a phone / Raspberry Pi gateway that reads a Bluetooth sensor. It creates its own RSA-3072 key at pairing time and never sends the private half. Every reading is sealed with a fresh Diffie–Hellman key and signed.", f: ["scripts/device_client.py", "app/simulator.py"], a: ["RSA-3072-PSS", "DH ffdhe3072", "AES-256-GCM", "SHA-512"] },
+    pairing: { t: "Pairing", d: "An admin, or a clinician on the patient's care team, issues a one-time code (XXXX-XXXX-XXXX, 10 minutes). The device proves it knows the code with an HMAC instead of sending it. Five wrong tries burn the code; a used code cannot be reused.", f: ["security/pairing.py", "api/devices.py"], a: ["HMAC-SHA-512", "AES-256-GCM (code at rest)"] },
+    ingest: { t: "Ingest", d: "Checks the RSA signature first, then the timestamp (±60 s) and an always-increasing sequence number, so forged and replayed packets are rejected before any decryption. Then it unseals the payload and validates the ranges.", f: ["readings/ingest.py", "security/sealing.py", "security/signatures.py"], a: ["RSA-PSS verify", "DH + HKDF-SHA-512", "AES-256-GCM"] },
+    risk: { t: "Risk engine", d: "Clinical thresholds and NEWS2 always win. A gradient-boosting model looks at the vitals, their change and how far they are from this patient's own rolling baseline (kept encrypted). The model can raise a band but never lower one.", f: ["ml/rules.py", "ml/features.py", "ml/infer.py"], a: ["Model file pinned by SHA-512"] },
+    crypto: { t: "Envelope encryption", d: "Each patient has their own AES-256 key, stored only wrapped by the master key. Readings, 5-minute summaries, personal details and notes are encrypted under it, bound to who and when with associated data. Destroying the key erases the patient (crypto-shredding).", f: ["security/crypto.py", "security/aead.py", "readings/rollups.py"], a: ["AES-256-GCM", "key wrapping"] },
+    api: { t: "API, sign-in and access control", d: "Passwords with PBKDF2, TOTP for staff, one-time recovery codes, forced password change, lockout and rate limits stored in the database. A clinician can open only assigned patients; an admin can never decrypt clinical data; revoked consent blocks everyone but the patient.", f: ["security/auth.py", "security/rbac.py", "api/*.py"], a: ["PBKDF2-HMAC-SHA-512", "TOTP HMAC-SHA-512", "SHA-512 session ids"] },
+    ledger: { t: "Privacy ledger", d: "Every sign-in, decrypt, acknowledgement, consent change, pairing, import and erasure is appended. Each row stores the SHA-512 of the previous one; every 50 rows the head is signed with the server's ECDSA key. The database also blocks edits and forks.", f: ["security/audit.py", "scripts/verify_audit.py"], a: ["SHA-512 hash chain", "ECDSA P-384"] },
+    jobs: { t: "Background jobs", d: "Once a minute: escalate critical alerts left unacknowledged for 15 minutes. Every 10 minutes: remove expired sessions and pairing codes, and purge readings older than the retention period (365 days by default).", f: ["app/jobs.py"], a: [] },
+    db: { t: "Database", d: "Holds ciphertext plus the minimum in clear needed to run the service: ids, times, band, risk score and reason codes such as SPO2_LOW, never the measured values. Alembic manages schema changes. SQLite for a laptop, PostgreSQL for a hospital.", f: ["models.py", "migrations/"], a: [] },
+    secrets: { t: "Key store", d: "The 256-bit master key lives in the server's environment (.env), never in the database. The server's Diffie–Hellman and ECDSA private keys are stored encrypted under it. Rotation re-wraps keys without re-encrypting any reading.", f: ["config.py", "security/server_keys.py", "scripts/rotate_master_key.py"], a: ["AES-256-GCM", "versioned keys"] },
+    web: { t: "Web app", d: "One React app, loaded per role so a patient never downloads admin code. Patients see their own data, consent and export. Clinicians get the risk-sorted worklist, charts, AI explanations, alerts, pairing and history import. Admins manage people, care teams, imports, devices and the ledger.", f: ["frontend/src/pages/*", "frontend/src/components/*"], a: ["httpOnly SameSite cookie", "CSRF header"] },
+  };
+  const detail = document.getElementById("detail");
+  const nodes = [...document.querySelectorAll("#arch .node")];
+  const edges = [...document.querySelectorAll("#arch .edge")];
+
+  function show(id) {
+    const c = C[id];
+    if (!c) return;
+    nodes.forEach((n) => n.classList.toggle("sel", n.dataset.id === id));
+    detail.innerHTML =
+      `<h3>${c.t}</h3><p class="small">${c.d}</p>` +
+      `<div class="row">${c.f.map((f) => `<span class="chip">${f}</span>`).join("")}${c.a.map((a) => `<span class="chip algo">${a}</span>`).join("")}</div>`;
+  }
+  nodes.forEach((n) => {
+    if (!C[n.dataset.id]) return;
+    n.addEventListener("click", () => show(n.dataset.id));
+    n.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show(n.dataset.id); } });
+  });
+  detail.innerHTML = `<h3>Select a part of the system</h3><p class="small muted">Green boxes and lines light up as you step through the walkthroughs below.</p>`;
+
+  function highlight(ids = [], es = []) {
+    nodes.forEach((n) => n.classList.toggle("on", ids.includes(n.dataset.id)));
+    edges.forEach((e) => e.classList.toggle("on", es.includes(e.dataset.edge)));
+  }
+
+  // ------------------------------------------------------------ steppers
+  const R = (cls, text) => `<span class="role ${cls}">${text}</span>`;
+  const reading = [
+    { s: "Measure", who: R("device", "Device"), h: ["device"], e: [], body: `
+      <p>The monitor takes a reading. Nothing is sent yet. (Example values, used through every step below.)</p>
+      <pre class="block">{ <span class="k">"hr"</span>: 112, <span class="k">"spo2"</span>: 89, <span class="k">"sbp"</span>: 118, <span class="k">"dbp"</span>: 74, <span class="k">"temp"</span>: 37.4, <span class="k">"rr"</span>: 25 }</pre>` },
+    { s: "Seal with a fresh key", who: R("device", "Device"), h: ["device"], e: [], body: `
+      <p>The device makes a brand-new Diffie–Hellman secret for this reading only and combines it with the server's public value. HKDF-SHA-512 turns the shared secret into a one-time AES-256 key, which encrypts the reading.</p>
+      <pre class="block"><span class="c"># e is random, used once, then thrown away</span>
+E   = g^e mod p                    <span class="c"># 3072-bit, sent with the packet</span>
+K   = HKDF-SHA-512( S^e mod p )    <span class="c"># S = server public value</span>
+ct  = AES-256-GCM(K, reading, AAD = device | seq | time | E)</pre>
+      <p class="small muted">If one reading's key ever leaked, no other reading would be affected (forward secrecy).</p>` },
+    { s: "Sign the digest", who: R("device", "Device"), h: ["device"], e: [], body: `
+      <p>The device hashes the whole packet with SHA-512 and signs the hash with its own RSA-3072 key. That proves which device sent it and that nothing changed on the way.</p>
+      <pre class="block">d   = SHA-512( "RPM1-packet" | device | seq | time | E | nonce | ct )
+sig = RSA-PSS-sign( device_private_key, d )</pre>` },
+    { s: "Send over TLS", who: R("device", "Device") + R("server", "Server"), h: ["device", "ingest"], e: ["dev-ingest"], body: `
+      <p>The packet travels to <code>POST /api/ingest</code> inside TLS 1.3. Even if TLS ended at a proxy, the payload would still be sealed and signed.</p>
+      <pre class="block">{ <span class="k">"device_id"</span>: "dev-9d2490a107e0", <span class="k">"seq"</span>: 1763021794123, <span class="k">"ts"</span>: 1763021794,
+  <span class="k">"epk"</span>: "Gd3k…(384 bytes)", <span class="k">"nonce"</span>: "…", <span class="k">"ct"</span>: "…", <span class="k">"sig"</span>: "…" }</pre>` },
+    { s: "Verify before trusting", who: R("server", "Server"), h: ["ingest", "ledger"], e: ["ingest-ledger"], body: `
+      <ul class="bullets small">
+        <li>Signature checks against the device's registered public key. <span class="bad">Forged → 401</span></li>
+        <li>Timestamp within ±60 seconds. <span class="bad">Old → 400</span></li>
+        <li>Sequence higher than the last one, set atomically. <span class="bad">Replay → 409</span></li>
+        <li>Patient consent is on and the record is not erased. <span class="bad">Otherwise → 403 / 410</span></li>
+        <li>Only then: unseal with the server's DH key and check the values are physiologically possible.</li>
+      </ul>
+      <p class="small muted">Every rejection is written to the privacy ledger.</p>` },
+    { s: "Score the risk", who: R("server", "Server"), h: ["risk"], e: ["ingest-risk"], body: `
+      <p>The rules fire first, then NEWS2, then the AI model compares the reading with this patient's own baseline.</p>
+      <table class="mini-table"><thead><tr><th>Signal</th><th>Result</th></tr></thead><tbody>
+        <tr><td>SpO₂ 89% (&lt; 92)</td><td class="bad">SPO2_LOW · critical</td></tr>
+        <tr><td>Breathing 25/min (&gt; 24)</td><td class="bad">RR_HIGH · critical</td></tr>
+        <tr><td>Heart rate 112</td><td>HR_HIGH · warning</td></tr>
+        <tr><td>NEWS2</td><td>8 → NEWS2_HIGH</td></tr>
+        <tr><td>AI model</td><td>0.94 → ML_RISK</td></tr>
+        <tr><td><b>Band</b></td><td class="bad">Critical</td></tr>
+      </tbody></table>` },
+    { s: "Encrypt for storage", who: R("server", "Server"), h: ["crypto", "db", "secrets"], e: ["risk-crypto", "crypto-db", "keys-crypto"], body: `
+      <p>The server unwraps this patient's own AES-256 key with the master key and encrypts the reading again for storage, bound to its row. It also updates the encrypted 5-minute summary used by the 24-hour and 7-day charts.</p>
+      <pre class="block"><span class="c"># what the database row holds</span>
+patient=3  device=dev-9d24…  seq=…  ts=…
+ciphertext = AES-256-GCM(patient_key, vitals, AAD = patient|device|seq|ts)
+band = "critical"   risk = 0.94   reasons = "SPO2_LOW,RR_HIGH,HR_HIGH,NEWS2_HIGH,ML_RISK"</pre>
+      <p class="small muted">The plaintext is dropped from memory as soon as this step ends. Logs record reason codes, never values.</p>` },
+    { s: "Alert the care team", who: R("server", "Server") + R("", "Clinician"), h: ["db", "api", "web", "ledger"], e: ["web-api", "api-crypto", "api-ledger", "ledger-db"], body: `
+      <p>One alert per reason opens on the worklist, which refreshes every 5 seconds. When the assigned clinician opens the record, the server checks role, assignment and consent, decrypts only for them, and records the access in the ledger.</p>
+      <p>If nobody acknowledges a critical alert within 15 minutes, it escalates with a red banner.</p>` },
+  ];
+
+  const hospital = [
+    { s: "Install the server", who: R("server", "Hospital IT"), h: ["secrets", "db"], e: [], body: `
+      <p>One server or VM, Docker optional. IT creates the secrets and installs a certificate their browsers already trust.</p>
+      <pre class="block">python scripts/init_env.py          <span class="c"># random 256-bit master key → .env (back it up!)</span>
+<span class="c"># put the hospital's TLS certificate in certs/</span>
+docker compose up -d                <span class="c"># or: python run_server.py</span></pre>
+      <p class="small muted">Losing <code>.env</code> means losing every patient's data, so it goes into the hospital's secret manager or an offline backup.</p>` },
+    { s: "Create the first admin", who: R("server", "Hospital IT"), h: ["api", "ledger"], e: [], body: `
+      <pre class="block">python scripts/create_admin.py --username it.admin --name "IT Administrator"</pre>
+      <p>At first sign-in the admin scans a QR code into an authenticator app (SHA-512 TOTP) and saves 10 one-time recovery codes. No demo users or data exist on a real install.</p>` },
+    { s: "Import staff and patients", who: R("", "Admin"), h: ["api", "crypto", "db", "ledger"], e: ["api-crypto", "crypto-db", "api-ledger"], body: `
+      <p>Admin → Bulk import. One CSV holds clinicians and patients, with each patient's care team.</p>
+      <pre class="block">username,full_name,role,dob,phone,address,care_team
+dr.sen,Dr. Arjun Sen,clinician,,,,
+p.verma,Kavita Verma,patient,1962-08-19,+91 98000 11111,22 Ring Road,dr.sen</pre>
+      <p>Every row is checked first. Nothing is created until the whole file is valid. Personal details are encrypted with each patient's own key. Temporary passwords are shown once and must be changed at first sign-in.</p>` },
+    { s: "Confirm the care teams", who: R("", "Admin"), h: ["api"], e: [], body: `
+      <p>Care teams come from the CSV and can be changed under Care teams. A clinician sees, pairs and imports only for patients on their own team. Admins never see clinical data at all.</p>` },
+    { s: "Pair each patient's device", who: R("", "Clinician") + R("device", "Device"), h: ["pairing", "device", "db"], e: ["dev-pair", "pair-db"], body: `
+      <p>Patient record → Pair device → a one-time code appears. Someone enters it on the device or gateway:</p>
+      <pre class="block">python scripts/device_client.py pair --pairing-id 7f3c… --code K7QM-2WXR-9HPD
+python scripts/device_client.py stream</pre>
+      <p>The device's public key is registered. If the device is lost, Revoke stops it instantly.</p>
+      <p class="small muted">A real monitor connects through a small gateway program that prints one JSON line per reading and pipes it into <code>device_client.py stream --source stdin</code>. See <code>docs/HANDOFF.md</code>.</p>` },
+    { s: "Bring in past readings", who: R("", "Clinician"), h: ["api", "risk", "crypto", "db"], e: ["api-crypto", "crypto-db"], body: `
+      <p>Patient record → Import past readings: a CSV from the old system (<code>timestamp,hr,spo2,sbp,dbp,temp,rr</code>, up to 20,000 rows). Readings are scored on their own baseline, encrypted, tagged with who imported them, and raise no alerts.</p>` },
+    { s: "Monitoring is live", who: R("", "Clinician"), h: ["device", "ingest", "risk", "crypto", "db", "web", "api", "jobs"], e: ["dev-ingest", "ingest-risk", "risk-crypto", "crypto-db", "web-api", "jobs-db"], body: `
+      <p>The worklist ranks patients by urgency, with AI risk and open alerts. Clinicians open a record for charts, the plain-language AI explanation and alerts, then acknowledge with a note.</p>
+      <p class="small muted">Background jobs escalate stale critical alerts and purge data past the retention period.</p>` },
+    { s: "Patients stay in control", who: R("patient", "Patient"), h: ["web", "api", "crypto", "ledger"], e: ["web-api", "api-ledger"], body: `
+      <ul class="bullets small">
+        <li><b>Pause sharing:</b> uploads stop and the care team loses access until it is resumed.</li>
+        <li><b>Download my data:</b> everything held about them, decrypted, as one file.</li>
+        <li><b>Erasure</b> (by an admin, on request): the patient's key is destroyed, so all of their data becomes permanently unreadable.</li>
+        <li>Every one of these actions appears in the ledger, which an admin can verify at any time.</li>
+      </ul>` },
+  ];
+
+  function stepper(rootId, steps) {
+    const root = document.getElementById(rootId);
+    let i = 0;
+    root.innerHTML = `<ol class="steps">${steps.map((st, k) => `<li><button type="button" data-k="${k}"><span class="n">${String(k + 1).padStart(2, "0")}</span><span>${st.s}</span></button></li>`).join("")}</ol><div class="pane"></div>`;
+    const pane = root.querySelector(".pane");
+    const btns = [...root.querySelectorAll(".steps button")];
+    function go(k, scrollMap) {
+      i = Math.max(0, Math.min(steps.length - 1, k));
+      const st = steps[i];
+      btns.forEach((b, j) => (j === i ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current")));
+      pane.innerHTML = `<div class="who">${st.who}</div><h3>${i + 1}. ${st.s}</h3>${st.body}
+        <div class="ctrl"><button type="button" data-a="prev" ${i === 0 ? "disabled" : ""}>Previous</button>
+        <span class="hint">Step ${i + 1} of ${steps.length} · lit up on the system map</span>
+        <button type="button" class="primary" data-a="next" ${i === steps.length - 1 ? "disabled" : ""}>Next step</button></div>`;
+      highlight(st.h, st.e);
+      if (scrollMap) btns[i].scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    root.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.k) go(+b.dataset.k);
+      else if (b.dataset.a === "next") go(i + 1, true);
+      else if (b.dataset.a === "prev") go(i - 1, true);
+    });
+    root.addEventListener("focusin", () => highlight(steps[i].h, steps[i].e));
+    root.addEventListener("mouseenter", () => highlight(steps[i].h, steps[i].e));
+    go(0);
+  }
+  stepper("hospitalStepper", hospital);
+  stepper("readingStepper", reading);
+})();
+</script>
+
+</body>
+</html>

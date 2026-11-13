@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError } from "./api";
+import { api, ApiError, DeviceType } from "./api";
 
 /** Fetch a JSON endpoint and re-fetch every `intervalMs` (pauses while the tab is hidden). */
 export function usePolling<T>(path: string | null, intervalMs = 5000) {
@@ -32,4 +32,22 @@ export function usePolling<T>(path: string | null, intervalMs = 5000) {
   }, [path, intervalMs, load]);
 
   return { data, error, reload: load };
+}
+
+let catalogCache: Promise<DeviceType[]> | null = null;
+
+/** The device catalog, fetched once per page load. */
+export function useDeviceCatalog(): DeviceType[] | null {
+  const [data, setData] = useState<DeviceType[] | null>(null);
+  useEffect(() => {
+    if (!catalogCache) catalogCache = api<DeviceType[]>("/api/devices/catalog").catch((e) => { catalogCache = null; throw e; });
+    let live = true;
+    catalogCache.then((c) => live && setData(c)).catch(() => live && setData([]));
+    return () => { live = false; };
+  }, []);
+  return data;
+}
+
+export function resetCatalogCacheForTests() {
+  catalogCache = null;
 }

@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { api, ApiError, sourceInfo } from "../api";
 import { usePolling } from "../hooks";
 import { Icon, initials } from "../components/Icons";
@@ -209,7 +209,7 @@ function BulkImport() {
     <>
       <Head eyebrow="Administration" title="Bulk import" sub="Onboard a hospital's staff and patients from one CSV file. Every row is checked first; nothing is created until the whole file is valid." />
       {!result && (
-        <CsvPicker sample={PEOPLE_SAMPLE} sampleName="securerpm-people-template.csv" onText={(t) => { setText(t); send(t, false); }} />
+        <CsvPicker sample={PEOPLE_SAMPLE} sampleName="vitalcare-people-template.csv" onText={(t) => { setText(t); send(t, false); }} />
       )}
       {err && <div className="notice error">{err}</div>}
       {result && (
@@ -217,7 +217,7 @@ function BulkImport() {
           <div className="notice success"><Icon.Check size={18} /> Created {result.created} accounts. Everyone gets a temporary password and must choose their own at first sign-in. Staff set up two-step sign-in then.</div>
           <div className="notice error"><Icon.Alert size={18} /><div>Download the temporary passwords now and hand them out securely. They are shown only once and are not stored anywhere.</div></div>
           <div className="row">
-            <button className="btn primary" onClick={() => saveFile("securerpm-temporary-passwords.csv", result.credentials_csv, "text/csv")}>Download temporary passwords</button>
+            <button className="btn primary" onClick={() => saveFile("vitalcare-temporary-passwords.csv", result.credentials_csv, "text/csv")}>Download temporary passwords</button>
             <button className="btn ghost" onClick={() => { setResult(null); setRows(null); setText(""); }}>Import another file</button>
           </div>
         </div>
@@ -375,14 +375,24 @@ function Devices() {
         </div>
         {selected && <DevicesCard key={selected.id} patientId={selected.id} patientName={selected.name} canManage />}
       </div>
-      <div className="card pad">
-        <h2>How pairing works</h2>
-        <ol className="steps" style={{ marginTop: 10 }}>
-          <li>An administrator, or a clinician on the patient's care team, creates a one-time code (valid 10 minutes).</li>
-          <li>The code is entered on the device. The device generates its own RSA-3072 key pair and sends its public key with an HMAC-SHA-512 proof of the code; the code itself never crosses the network.</li>
-          <li>Five wrong proofs burn the code. A used code cannot be reused. Revoked devices are rejected at ingest immediately.</li>
-        </ol>
-        <p className="muted small" style={{ marginTop: 10 }}>Command-line device: <code>python scripts/device_client.py pair --pairing-id ID --code CODE</code>, then <code>stream</code>.</p>
+      <div className="grid two">
+        <div className="card pad">
+          <h2>Connecting a device</h2>
+          <ol className="steps" style={{ marginTop: 10 }}>
+            <li>Pick a patient on the left, then select <b>Connect device</b>.</li>
+            <li>Choose the device type and name it; a one-time code and QR code appear (valid 10 minutes).</li>
+            <li>Scan or type it on the gateway. The window confirms when readings arrive.</li>
+          </ol>
+          <p className="small" style={{ marginTop: 10 }}><Link to="/devices/guide">Open the Device guide</Link> for supported devices and troubleshooting.</p>
+        </div>
+        <div className="card pad">
+          <h2>Why it is safe</h2>
+          <ul className="checklist">
+            <li><Icon.Check size={14} /> The device makes its own RSA-3072 key; only the public half reaches Vitalcare.</li>
+            <li><Icon.Check size={14} /> It proves it knows the code with HMAC-SHA-512, so the code itself never crosses the network.</li>
+            <li><Icon.Check size={14} /> Codes work once; five wrong tries lock them. Revoked devices are rejected immediately.</li>
+          </ul>
+        </div>
       </div>
     </>
   );
@@ -394,7 +404,7 @@ const EPISODES = ["hypoxia", "tachycardia", "hypotension", "fever", "activity"];
 
 function Simulator() {
   const { data, reload } = usePolling<PatientRow[]>("/api/admin/patients", 4000);
-  const { data: src } = usePolling<{ available: { mimic: boolean; bidmc: boolean }; sources: Source[] }>("/api/admin/simulator/sources", 60000);
+  const { data: src } = usePolling<{ available: { mimic: boolean; bidmc: boolean; eicu: boolean }; sources: Source[] }>("/api/admin/simulator/sources", 60000);
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
   const call = async (path: string, body: unknown, ok: string) => {
@@ -417,6 +427,10 @@ function Simulator() {
         <button className="btn secondary" onClick={() => all(true)}><Icon.Play size={16} /> Start all</button>
         <button className="btn ghost" onClick={() => all(false)}>Stop all</button>
       </Head>
+      <div className="card pad">
+        <div className="row"><Icon.Database size={18} /><h2>eICU Collaborative Research Database Demo</h2><span className="spacer" />{src?.available.eicu ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>
+        <p className="muted small" style={{ marginTop: 8 }}>2,520 real ICU stays from 186 US hospitals (PhysioNet, ODbL), heart rate, SpO₂, breathing rate and blood pressure every 5 minutes. Temperature is rarely charted here and is held fixed when missing. Replayed one 5-minute row per tick.</p>
+      </div>
       <div className="grid two">
         <div className="card pad">
           <div className="row"><Icon.Database size={18} /><h2>MIMIC-III Clinical Demo</h2><span className="spacer" />{src?.available.mimic ? <span className="tag ok">Loaded</span> : <span className="tag">Not downloaded</span>}</div>

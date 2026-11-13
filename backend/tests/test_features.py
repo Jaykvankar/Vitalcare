@@ -217,3 +217,15 @@ def test_retention_purges_old_readings(world):
     db.close()
     far_future = datetime.now(UTC) + timedelta(days=4000)
     assert jobs.apply_retention(now=far_future) == before
+
+
+def test_access_log_carries_request_id(world, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="rpm.access")
+    r = raw_client(world).get("/api/health", headers={"X-Request-ID": "trace-12345678"})
+    assert r.headers["X-Request-ID"] == "trace-12345678"
+    from app.logging_setup import JsonFormatter
+
+    line = next(rec for rec in caplog.records if rec.name == "rpm.access")
+    assert '"request_id":"trace-12345678"' in JsonFormatter().format(line)

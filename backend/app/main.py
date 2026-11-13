@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import uuid
@@ -43,6 +44,8 @@ async def lifespan(app: FastAPI):
     audit.append("server_start")
     if get_settings().run_jobs:
         jobs.start()
+    if os.environ.get("RPM_DEMO_AUTOSTREAM", "").lower() == "true":
+        _start_demo_streams()
     yield
     from .simulator import runner
 
@@ -52,8 +55,32 @@ async def lifespan(app: FastAPI):
     audit.checkpoint_now()
 
 
+def _start_demo_streams() -> None:
+    """Demo mode: every simulated monitor whose patient has consented starts streaming at startup."""
+    from sqlalchemy import select
+
+    from .db import SessionLocal
+    from .models import Patient
+    from .simulator import runner
+
+    db = SessionLocal()
+    try:
+        ids = {pid for (pid,) in db.execute(
+            select(Patient.id).where(Patient.consent_active.is_(True), Patient.erased_at.is_(None))).all()}
+    finally:
+        db.close()
+    started = 0
+    for info in runner.keystore.devices.values():
+        if info["patient_id"] in ids:
+            runner.set_enabled(info["patient_id"], True)
+            started += 1
+    if started:
+        runner.start()
+        audit.append("simulator_on", actor="demo", detail=f"autostream devices={started}")
+
+
 def create_app(*, with_lifespan: bool = True) -> FastAPI:
-    app = FastAPI(title="Secure Remote Patient Monitoring", lifespan=lifespan if with_lifespan else None,
+    app = FastAPI(title="Vitalcare Remote Patient Monitoring", lifespan=lifespan if with_lifespan else None,
                   docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
 
     @app.middleware("http")
@@ -64,12 +91,12 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         started = time.perf_counter()
         try:
             response = await _secure(request, call_next)
+            response.headers["X-Request-ID"] = rid
+            access.info("request", extra={"request_id": rid, "method": request.method, "path": request.url.path,
+                                          "status": response.status_code,
+                                          "duration_ms": round((time.perf_counter() - started) * 1000, 1)})
         finally:
             logging_setup.request_id.reset(token)
-        response.headers["X-Request-ID"] = rid
-        access.info("request", extra={"method": request.method, "path": request.url.path,
-                                      "status": response.status_code,
-                                      "duration_ms": round((time.perf_counter() - started) * 1000, 1)})
         return response
 
     async def _secure(request: Request, call_next):

@@ -15,10 +15,20 @@ from sklearn.metrics import roc_auc_score
 
 from .features import features_and_update, new_state
 from .infer import band_for, load_model
-from .realdata import PROJECT_DIR, available, bidmc_records, load_bidmc, load_mimic
+from .realdata import (
+    PROJECT_DIR,
+    available,
+    bidmc_records,
+    eicu_rows_as_dicts,
+    load_bidmc,
+    load_eicu_meta,
+    load_eicu_rows,
+    load_mimic,
+)
 from .rules import evaluate_rules, news2
 
 REFRACTORY_H = 4
+REFRACTORY_5MIN = 12  # one hour of 5-minute rows
 
 
 def run_sequence(rows: list[dict], model) -> dict:
@@ -132,6 +142,129 @@ def bidmc_section(model) -> str:
 """
 
 
+def eicu_section(model) -> str:
+    """eICU demo: 5-minute vitals from many hospitals, evaluated with hospital-level splits."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import GroupKFold
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    meta = load_eicu_meta()
+    all_rows = load_eicu_rows()
+    per_row = 5 / 60  # hours per 5-minute row
+    hours = crit_hours = 0.0
+    crit_events = crit_events_rules = 0
+    stays, y, groups, feats_24 = [], [], [], []
+    first24: dict[str, list[float]] = {"news2_max": [], "prob_mean": [], "crit_frac": []}
+    for stay, m in meta.items():
+        rows = eicu_rows_as_dicts(all_rows[stay])
+        r = run_sequence(rows, model)
+        crit = [b == "critical" for b in r["bands"]]
+        crit_r = [b == "critical" for b in r["bands_rules"]]
+        hours += len(rows) * per_row
+        crit_hours += sum(crit) * per_row
+        crit_events += events(crit, REFRACTORY_5MIN)
+        crit_events_rules += events(crit_r, REFRACTORY_5MIN)
+        idx = [i for i, row in enumerate(rows) if row["t_min"] <= 1440]
+        if len(idx) < 12:
+            continue
+        sl = slice(idx[0], idx[-1] + 1)
+        part = rows[sl]
+        stays.append(stay)
+        y.append(int(m["died_in_hospital"]))
+        groups.append(m["hospital_id"])
+        first24["news2_max"].append(int(r["news2"][sl].max()))
+        first24["prob_mean"].append(float(r["prob"][sl].mean()))
+        first24["crit_frac"].append(float(np.mean(crit[sl])))
+        arr = {k: np.array([p[k] for p in part]) for k in ("hr", "spo2", "rr", "sbp")}
+        feats_24.append([*(f(arr[k]) for k in ("hr", "spo2", "rr", "sbp") for f in (np.mean, np.min, np.max)),
+                         float(r["news2"][sl].max()), float(r["prob"][sl].mean())])
+    days = hours / 24
+    y_arr, g_arr, X = np.array(y), np.array(groups), np.array(feats_24)
+
+    # Hospital-held-out: a simple model trained on real data from some hospitals, tested on unseen hospitals.
+    folds = []
+    for train, test in GroupKFold(n_splits=5).split(X, y_arr, g_arr):
+        clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, class_weight="balanced"))
+        clf.fit(X[train], y_arr[train])
+        p = clf.predict_proba(X[test])[:, 1]
+        folds.append({"hospitals": len(set(g_arr[test])), "stays": len(test), "deaths": int(y_arr[test].sum()),
+                      "real_model": auc(y_arr[test], p),
+                      "news2": auc(y_arr[test], X[test][:, -2]),
+                      "synthetic_model": auc(y_arr[test], X[test][:, -1])})
+
+    def fold_row(name: str, key: str) -> str:
+        vals = [f[key] for f in folds]
+        return f"| {name} | " + " | ".join(f"{v:.3f}" for v in vals) + f" | **{np.mean(vals):.3f} ± {np.std(vals):.3f}** |"
+
+    # Breakdown by hospital characteristics (pooled first-24 h scores).
+    def breakdown(field: str) -> str:
+        out = []
+        values = sorted({meta[s][field] for s in stays}, key=str)
+        for val in values:
+            sel = [i for i, s in enumerate(stays) if meta[s][field] == val]
+            ys = [y[i] for i in sel]
+            deaths = sum(ys)
+            label = {True: "teaching", False: "non-teaching"}.get(val, val) if field == "hospital_teaching" else val
+            if deaths >= 10 and deaths < len(ys):
+                out.append(f"| {label} | {len(sel)} | {deaths} | {auc(ys, [first24['news2_max'][i] for i in sel]):.3f} | "
+                           f"{auc(ys, [first24['prob_mean'][i] for i in sel]):.3f} |")
+            else:
+                out.append(f"| {label} | {len(sel)} | {deaths} | too few deaths | too few deaths |")
+        return "\n".join(out)
+
+    n_hosp = len({m["hospital_id"] for m in meta.values()})
+    temp_stays = sum(m["temp_measured"] for m in meta.values())
+    return f"""## eICU Collaborative Research Database Demo (real ICU patients, many hospitals)
+
+- Source: PhysioNet `eicu-crd-demo` v2.0.1 (Open Data Commons ODbL): tables `patient`, `hospital`,
+  `vitalPeriodic` (5-minute medians) and `vitalAperiodic` (cuff blood pressure).
+- Used: {len(meta)} ICU stays from {n_hosp} hospitals that had heart rate, SpO2, breathing rate and blood pressure for at
+  least an hour ({sum(m['died_in_hospital'] for m in meta.values())} patients died in hospital), {hours:,.0f} patient-hours
+  ({days:.0f} patient-days) at 5-minute resolution.
+- Blood pressure: arterial line when present, otherwise the latest cuff reading within 4 h.
+- Temperature was charted in these tables for only {temp_stays} stays; elsewhere it is held at 36.9 C, so fever rules
+  cannot fire for those patients and NEWS2 misses its temperature points.
+
+### Alert burden at 5-minute resolution
+| Metric | Rules + NEWS2 only | Rules + NEWS2 + model |
+|---|---|---|
+| Critical alert events per patient-day (1 h refractory) | {crit_events_rules / days:.2f} | {crit_events / days:.2f} |
+| Time spent in critical band | - | {crit_hours / hours:.1%} |
+
+### First 24 h of the stay: does the score separate patients who later died? (all {len(stays)} stays pooled)
+| Signal | AUROC |
+|---|---|
+| Max NEWS2 | {auc(y, first24['news2_max']):.3f} |
+| Mean model probability (synthetic-trained model) | {auc(y, first24['prob_mean']):.3f} |
+| Share of time in critical band | {auc(y, first24['crit_frac']):.3f} |
+
+### Hospital-held-out test (train on some hospitals, test on hospitals never seen)
+Stays were split into 5 folds **by hospital** (GroupKFold), so no hospital appears in both training and test data.
+A logistic regression was trained on first-24 h summaries (mean/min/max of HR, SpO2, RR, systolic BP, plus max NEWS2
+and the mean synthetic-model probability) from the training hospitals, and scored on the held-out hospitals.
+
+| Signal | Fold 1 | Fold 2 | Fold 3 | Fold 4 | Fold 5 | Mean ± SD |
+|---|---|---|---|---|---|---|
+| Held-out hospitals / stays / deaths | {' | '.join(f"{f['hospitals']} / {f['stays']} / {f['deaths']}" for f in folds)} | |
+{fold_row('Real-data model (trained on other hospitals)', 'real_model')}
+{fold_row('Max NEWS2 (no training)', 'news2')}
+{fold_row('Synthetic-trained model (no retraining)', 'synthetic_model')}
+
+The real-data model is an evaluation experiment only; the live app still uses the rules, NEWS2 and the
+synthetic-trained model.
+
+### By hospital characteristics (pooled first-24 h scores)
+| Region | Stays | Deaths | NEWS2 AUROC | Model AUROC |
+|---|---|---|---|---|
+{breakdown('hospital_region')}
+
+| Teaching status | Stays | Deaths | NEWS2 AUROC | Model AUROC |
+|---|---|---|---|---|
+{breakdown('hospital_teaching')}
+"""
+
+
 def main() -> None:
     model = load_model()
     have = available()
@@ -146,11 +279,13 @@ scores separate patients with worse outcomes. It is not a clinical validation.
 """]
     if have["mimic"]:
         parts.append(mimic_section(model))
+    if have["eicu"]:
+        parts.append(eicu_section(model))
     if have["bidmc"]:
         parts.append(bidmc_section(model))
     parts.append("""## Known gaps
-- MIMIC vitals are charted about hourly, while the model was trained on one reading per minute. Deltas and
-  z-scores therefore have a different scale, which mainly affects the model, not the rules.
+- MIMIC vitals are charted about hourly and eICU vitals every 5 minutes, while the model was trained on one reading
+  per minute. Deltas and z-scores therefore have a different scale, which mainly affects the model, not the rules.
 - NEWS2 here omits supplemental oxygen and consciousness level, which are not measured by a wearable.
 - The datasets are small, so results are indicative only. A real deployment would need validation on a large,
   representative cohort and clinical review of thresholds.

@@ -12,6 +12,7 @@ const Worklist = lazy(() => import("./pages/Worklist"));
 const PatientDetail = lazy(() => import("./pages/PatientDetail"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Account = lazy(() => import("./pages/Account"));
+const DeviceGuide = lazy(() => import("./pages/DeviceGuide"));
 
 interface AuthCtx {
   me: Me | null;
@@ -52,6 +53,7 @@ export default function App() {
             {me.role === "clinician" && <Route path="/patients/:id" element={<PatientDetail />} />}
             {me.role === "admin" && <Route path="/admin/*" element={<Admin />} />}
             <Route path="/account" element={<Account />} />
+            <Route path="/devices/guide" element={<DeviceGuide />} />
             <Route path="*" element={<Navigate to={homeFor(me)} replace />} />
           </Routes>
           </Suspense>
@@ -66,13 +68,20 @@ export default function App() {
 }
 
 const NAV: Record<string, { to: string; label: string; icon: keyof typeof Icon }[]> = {
-  patient: [{ to: "/me", label: "My health", icon: "Heart" }],
-  clinician: [{ to: "/worklist", label: "Patient worklist", icon: "Grid" }],
+  patient: [
+    { to: "/me", label: "My health", icon: "Heart" },
+    { to: "/devices/guide", label: "Help with devices", icon: "Watch" },
+  ],
+  clinician: [
+    { to: "/worklist", label: "Patient worklist", icon: "Grid" },
+    { to: "/devices/guide", label: "Device guide", icon: "Watch" },
+  ],
   admin: [
     { to: "/admin/users", label: "People", icon: "Users" },
     { to: "/admin/import", label: "Bulk import", icon: "Database" },
     { to: "/admin/assignments", label: "Care teams", icon: "Link" },
     { to: "/admin/devices", label: "Devices & pairing", icon: "Watch" },
+    { to: "/devices/guide", label: "Device guide", icon: "Inbox" },
     { to: "/admin/simulator", label: "Data sources", icon: "Play" },
     { to: "/admin/audit", label: "Privacy ledger", icon: "Ledger" },
     { to: "/admin/security", label: "Keys & algorithms", icon: "Shield" },
@@ -83,6 +92,7 @@ const CRUMB: Record<string, string> = {
   "/me": "My health", "/worklist": "Patient worklist", "/admin/users": "People", "/admin/assignments": "Care teams",
   "/admin/devices": "Devices & pairing", "/admin/simulator": "Data sources", "/admin/audit": "Privacy ledger",
   "/admin/security": "Keys & algorithms", "/admin/import": "Bulk import", "/account": "Sign-in & security",
+  "/devices/guide": "Device guide",
 };
 
 function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setTheme: (t: Theme) => void; children: React.ReactNode }) {
@@ -104,7 +114,7 @@ function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setThe
       <aside className={`sidebar ${open ? "open" : ""}`} aria-label="Main navigation">
         <div className="side-brand">
           <span className="mark"><Icon.Logo size={18} /></span>
-          <span className="name">SecureRPM</span>
+          <span className="name">Vitalcare</span>
         </div>
         <div className="side-section">
           <div className="side-label">{me.role === "admin" ? "Administration" : "Care workspace"}</div>
@@ -160,7 +170,7 @@ function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setThe
           </div>
         </header>
         <main className="content">{children}</main>
-        <footer className="footer">SecureRPM · educational project, not a certified medical device · decision support only, no diagnosis is made.</footer>
+        <footer className="footer">Vitalcare · educational project, not a certified medical device · decision support only, no diagnosis is made.</footer>
       </div>
     </div>
   );

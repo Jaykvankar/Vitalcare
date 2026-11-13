@@ -10,7 +10,7 @@ frontend/node_modules/
 frontend/dist/
 .pytest_cache/
 data/real/
-device_state.json
+device_state*.json
 *.tsbuildinfo
 .e2e/
 frontend/test-results/
@@ -33,3 +33,4 @@ AGENTS.md
 .continue/
 .codeium/
 .github/copilot-instructions.md
+demo-backup-*/

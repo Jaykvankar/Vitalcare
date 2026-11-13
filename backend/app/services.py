@@ -60,7 +60,7 @@ def provision_simulated_device(db: Session, patient_id: int, label: str, *, crea
     from .security.hashing import b64d
     from .simulator import pairing_request, runner
 
-    pc, code = pairing.create(db, patient_id=patient_id, label=label, created_by=created_by)
+    pc, code = pairing.create(db, patient_id=patient_id, label=label, created_by=created_by, device_type="simulator")
     private_pem, body = pairing_request(pc.id, code)
     device = pairing.complete(db, pairing_id=pc.id, public_key_pem=body["public_key_pem"],
                               proof_bytes=b64d(body["proof"]))

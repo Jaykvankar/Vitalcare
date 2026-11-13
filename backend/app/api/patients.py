@@ -76,7 +76,8 @@ def profile(patient_id: int, user: User = Depends(auth.require_role("clinician",
     p = rbac.patient_for_read(db, user, patient_id, need_consent=False)
     out = _summary(db, p)
     out["devices"] = [
-        {"id": d.id, "label": d.label, "active": d.active, "last_seen": _iso(d.last_seen)}
+        {"id": d.id, "label": d.label, "active": d.active, "last_seen": _iso(d.last_seen),
+         "device_type": d.device_type}
         for d in db.execute(select(Device).where(Device.patient_id == p.id, Device.kind == "device")).scalars()
     ]
     out["consent_changed_at"] = _iso(p.consent_changed_at)

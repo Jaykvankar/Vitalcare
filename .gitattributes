@@ -1,2 +1,4 @@
 *.joblib binary
 *.pem binary
+*.woff2 binary
+*.gz binary

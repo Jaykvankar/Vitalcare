@@ -1,4 +1,4 @@
-"""Start the HTTPS server: https://localhost:8443
+"""Start the Vitalcare HTTPS server (default https://localhost:8443; RPM_HOST, RPM_PORT, RPM_TLS_CERT, RPM_TLS_KEY)
 
     .venv\\Scripts\\python run_server.py
 """
@@ -21,9 +21,12 @@ if __name__ == "__main__":
                            "RPM_ALLOWED_ORIGINS": f"http://localhost:{port},http://127.0.0.1:{port}"})
         uvicorn.run("app.main:app", host="127.0.0.1", port=port, workers=1, server_header=False, access_log=False)
         raise SystemExit(0)
-    cert, key = ROOT / "certs" / "dev-cert.pem", ROOT / "certs" / "dev-key.pem"
-    if not cert.exists():
-        raise SystemExit("No TLS certificate. Run: python scripts/gen_dev_cert.py")
+    # A hospital points these at its own certificate and key; the defaults are the self-signed dev pair.
+    cert = Path(os.environ.get("RPM_TLS_CERT", ROOT / "certs" / "dev-cert.pem"))
+    key = Path(os.environ.get("RPM_TLS_KEY", ROOT / "certs" / "dev-key.pem"))
+    if not cert.exists() or not key.exists():
+        raise SystemExit(f"TLS certificate or key not found ({cert}, {key}). "
+                         "Set RPM_TLS_CERT / RPM_TLS_KEY, or run: python scripts/gen_dev_cert.py")
     uvicorn.run(
         "app.main:app", host=os.environ.get("RPM_HOST", "127.0.0.1"), port=int(os.environ.get("RPM_PORT", "8443")),
         ssl_certfile=str(cert), ssl_keyfile=str(key), workers=1, proxy_headers=False, server_header=False, access_log=False,

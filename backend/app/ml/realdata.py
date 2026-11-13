@@ -7,6 +7,11 @@ BIDMC PPG and Respiration Dataset v1.0.0 (ODC-BY): 53 ICU recordings, 8 min each
     Has HR, SpO2 and RR only. Blood pressure and temperature were not recorded; replay holds them
     at fixed normal values and marks them as not measured.
 
+eICU Collaborative Research Database Demo v2.0.1 (ODbL): 2,520 ICU stays from 186 US hospitals.
+    5-minute vital signs (vitalPeriodic) plus cuff blood pressure (vitalAperiodic); hospital outcome
+    and hospital characteristics. Temperature is rarely charted in these tables (167 stays); when it
+    is missing it is held at a fixed normal value and flagged.
+
 Dates in MIMIC are shifted for de-identification; only relative times are used.
 """
 from __future__ import annotations
@@ -16,6 +21,7 @@ import json
 import statistics
 from collections import defaultdict
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from .rules import PLAUSIBLE, VITALS
@@ -42,7 +48,9 @@ BIDMC_FIXED = {"sbp": 120.0, "dbp": 78.0, "temp": 36.9}
 
 
 def available() -> dict:
-    return {"mimic": (MIMIC_DIR / "CHARTEVENTS.csv").exists(), "bidmc": BIDMC_DIR.exists() and any(BIDMC_DIR.glob("*.csv"))}
+    return {"mimic": (MIMIC_DIR / "CHARTEVENTS.csv").exists(),
+            "bidmc": BIDMC_DIR.exists() and any(BIDMC_DIR.glob("*.csv")),
+            "eicu": eicu_available()}
 
 
 def _ts(s: str) -> datetime:
@@ -143,6 +151,155 @@ def bidmc_records() -> list[int]:
     return sorted(int(p.name.split("_")[1]) for p in BIDMC_DIR.glob("bidmc_*_Numerics.csv"))
 
 
+# ---------------------------------------------------------------- eICU Collaborative Research Database demo
+
+EICU_DIR = REAL_DIR / "eicu"
+EICU_META = REAL_DIR / "eicu_meta.json"
+EICU_ROWS = REAL_DIR / "eicu_5min.json.gz"
+EICU_BP_FFILL_MIN = 240     # cuff blood pressure is measured every 1-4 h: carry it forward up to 4 h
+EICU_TEMP_FFILL_MIN = 720   # temperature carried forward up to 12 h when it was measured at all
+EICU_TEMP_FIXED = 36.9      # used only when no temperature was recorded (flagged per row)
+EICU_MIN_ROWS = 12          # at least one hour of 5-minute data
+
+
+def eicu_available() -> bool:
+    return all((EICU_DIR / f"{n}.csv.gz").exists() for n in ("patient", "hospital", "vitalPeriodic", "vitalAperiodic"))
+
+
+def _f(value: str) -> float | None:
+    try:
+        v = float(value)
+    except ValueError:
+        return None
+    return v if v == v else None  # drop NaN
+
+
+def _ok(k: str, v: float | None) -> bool:
+    return v is not None and _plausible(k, v)
+
+
+def build_eicu_cache() -> tuple[dict, dict]:
+    """Turn the eICU demo tables into 5-minute vital-sign rows per ICU stay.
+
+    Heart rate, SpO2 and respiration come from vitalPeriodic (5-minute medians). Blood pressure is the
+    arterial line when present, otherwise the most recent cuff reading (vitalAperiodic) within 4 h.
+    Temperature is rare in vitalPeriodic; when a stay has none, it is held at 36.9 C and flagged.
+    Offsets are minutes from ICU admission (eICU stores no real dates).
+    """
+    import gzip
+
+    hospitals: dict[str, dict] = {}
+    with gzip.open(EICU_DIR / "hospital.csv.gz", "rt", newline="") as f:
+        for r in csv.DictReader(f):
+            hospitals[r["hospitalid"]] = {"beds": r["numbedscategory"] or "unknown",
+                                          "teaching": r["teachingstatus"] == "t",
+                                          "region": r["region"] or "unknown"}
+    stays: dict[str, dict] = {}
+    with gzip.open(EICU_DIR / "patient.csv.gz", "rt", newline="") as f:
+        for r in csv.DictReader(f):
+            stays[r["patientunitstayid"]] = {
+                "hospital_id": r["hospitalid"], "unit_type": r["unittype"], "age": r["age"],
+                "died_in_hospital": r["hospitaldischargestatus"] == "Expired",
+                "died_in_unit": r["unitdischargestatus"] == "Expired",
+                "unit_minutes": int(r["unitdischargeoffset"] or 0),
+            }
+
+    cuff: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
+    with gzip.open(EICU_DIR / "vitalAperiodic.csv.gz", "rt", newline="") as f:
+        for r in csv.DictReader(f):
+            s, d = _f(r["noninvasivesystolic"]), _f(r["noninvasivediastolic"])
+            if _ok("sbp", s) and _ok("dbp", d) and d < s:  # type: ignore[operator]
+                cuff[r["patientunitstayid"]].append((int(r["observationoffset"]), s, d))  # type: ignore[arg-type]
+
+    periodic: dict[str, dict[int, dict[str, float]]] = defaultdict(dict)
+    with gzip.open(EICU_DIR / "vitalPeriodic.csv.gz", "rt", newline="") as f:
+        for r in csv.DictReader(f):
+            vals = {"hr": _f(r["heartrate"]), "spo2": _f(r["sao2"]), "rr": _f(r["respiration"]),
+                    "sbp": _f(r["systemicsystolic"]), "dbp": _f(r["systemicdiastolic"]), "temp": _f(r["temperature"])}
+            periodic[r["patientunitstayid"]][int(r["observationoffset"])] = {
+                k: v for k, v in vals.items() if _ok(k, v)}  # type: ignore[misc]
+
+    meta: dict[str, dict] = {}
+    rows_out: dict[str, list[list[float]]] = {}
+    for stay, by_offset in periodic.items():
+        info = stays.get(stay)
+        if info is None:
+            continue
+        bp = sorted(cuff.get(stay, []))
+        bi, last_bp = 0, None
+        last_temp: tuple[int, float] | None = None
+        rows: list[list[float]] = []
+        temp_seen = False
+        for off in sorted(by_offset):
+            v = by_offset[off]
+            while bi < len(bp) and bp[bi][0] <= off:
+                last_bp = bp[bi]
+                bi += 1
+            if "temp" in v:
+                last_temp = (off, v["temp"])
+            if not all(k in v for k in ("hr", "spo2", "rr")):
+                continue
+            if "sbp" in v and "dbp" in v and v["dbp"] < v["sbp"]:
+                sbp, dbp = v["sbp"], v["dbp"]
+            elif last_bp is not None and off - last_bp[0] <= EICU_BP_FFILL_MIN:
+                sbp, dbp = last_bp[1], last_bp[2]
+            else:
+                continue
+            if last_temp is not None and off - last_temp[0] <= EICU_TEMP_FFILL_MIN:
+                temp, measured = last_temp[1], 1
+                temp_seen = True
+            else:
+                temp, measured = EICU_TEMP_FIXED, 0
+            rows.append([off, v["hr"], v["spo2"], sbp, dbp, round(temp, 2), v["rr"], measured])
+        if len(rows) < EICU_MIN_ROWS:
+            continue
+        h = hospitals.get(info["hospital_id"], {"beds": "unknown", "teaching": False, "region": "unknown"})
+        meta[stay] = {**info, **{f"hospital_{k}": v for k, v in h.items()},
+                      "rows": len(rows), "temp_measured": temp_seen}
+        rows_out[stay] = rows
+
+    EICU_META.write_text(json.dumps(meta))
+    with gzip.open(EICU_ROWS, "wt") as f:
+        json.dump(rows_out, f, separators=(",", ":"))
+    _eicu_rows_cached.cache_clear()
+    return meta, rows_out
+
+
+def _cache_fresh() -> bool:
+    if not (EICU_META.exists() and EICU_ROWS.exists()):
+        return False
+    newest_source = max((EICU_DIR / f"{n}.csv.gz").stat().st_mtime
+                        for n in ("patient", "hospital", "vitalPeriodic", "vitalAperiodic"))
+    return EICU_ROWS.stat().st_mtime >= newest_source
+
+
+def load_eicu_meta() -> dict:
+    if not _cache_fresh():
+        return build_eicu_cache()[0]
+    return json.loads(EICU_META.read_text())
+
+
+@lru_cache(maxsize=1)
+def _eicu_rows_cached() -> dict:
+    import gzip
+
+    with gzip.open(EICU_ROWS, "rt") as f:
+        return json.load(f)
+
+
+def load_eicu_rows() -> dict[str, list[list[float]]]:
+    if not _cache_fresh():
+        build_eicu_cache()
+    return _eicu_rows_cached()
+
+
+EICU_FIELDS = ("t_min", "hr", "spo2", "sbp", "dbp", "temp", "rr", "temp_measured")
+
+
+def eicu_rows_as_dicts(rows: list[list[float]]) -> list[dict]:
+    return [dict(zip(EICU_FIELDS, r, strict=True)) for r in rows]
+
+
 class ReplayStream:
     """Plays recorded rows one per step, looping at the end. Same interface as synth.PatientStream."""
 
@@ -167,6 +324,14 @@ def replay_sources() -> list[dict]:
             out.append({"id": f"mimic:{stay}", "label": f"MIMIC-III ICU stay {stay}",
                         "detail": f"{len(s['rows'])} hourly rows, all six vitals real"
                                   + (", patient died in hospital" if s["died_in_hospital"] else "")})
+    if eicu_available():
+        meta = load_eicu_meta()
+        ranked = sorted(meta.items(), key=lambda kv: (not kv[1]["died_in_hospital"], -kv[1]["rows"]))[:40]
+        for stay, s in ranked:
+            temp = "temperature measured" if s["temp_measured"] else "temperature not recorded (held fixed)"
+            out.append({"id": f"eicu:{stay}", "label": f"eICU stay {stay} · hospital {s['hospital_id']}",
+                        "detail": f"{s['rows']} five-minute rows, {s['hospital_region']} {s['hospital_beds']} beds; "
+                                  f"{temp}" + ("; patient died in hospital" if s["died_in_hospital"] else "")})
     if available()["bidmc"]:
         for n in bidmc_records():
             out.append({"id": f"bidmc:{n}", "label": f"BIDMC record {n:02d}",
@@ -180,4 +345,7 @@ def stream_for_source(source: str, start: int = 0) -> ReplayStream | None:
         return ReplayStream(stay["rows"], source, start) if stay else None
     if source.startswith("bidmc:"):
         return ReplayStream(load_bidmc(int(source.split(":", 1)[1])), source, start)
+    if source.startswith("eicu:") and eicu_available():
+        rows = load_eicu_rows().get(source.split(":", 1)[1])
+        return ReplayStream(eicu_rows_as_dicts(rows), source, start) if rows else None
     return None

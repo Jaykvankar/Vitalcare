@@ -45,7 +45,7 @@ export function ImportHistoryModal({ patientId, patientName, onClose }: { patien
             </div>
           ) : (
             <>
-              <CsvPicker sample={SAMPLE} sampleName="securerpm-vitals-template.csv" onText={(t) => { setText(t); send(t, false); }} />
+              <CsvPicker sample={SAMPLE} sampleName="vitalcare-vitals-template.csv" onText={(t) => { setText(t); send(t, false); }} />
               <p className="muted small">Columns: <code>timestamp</code> (ISO 8601 or Unix seconds), <code>hr, spo2, sbp, dbp, temp, rr</code>. Up to 20,000 rows. Imported readings are scored on their own baseline so they never disturb live monitoring.</p>
               {err && <div className="notice error">{err}</div>}
               {res && (

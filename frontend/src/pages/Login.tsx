@@ -8,6 +8,78 @@ import { RecoveryCodes } from "./Account";
 
 type Step = { kind: "password" } | { kind: "verify" } | { kind: "enroll"; uri: string; secret: string } | { kind: "codes"; codes: string[]; user: Me };
 
+const BASELINE = 96;
+// Each beat ends on the baseline so the loop has no seam. Heights differ on purpose.
+const BEATS: Array<Array<[number, number]>> = [
+  [[10, 96], [6, 58], [6, 96], [6, 96], [7, 6], [12, 154], [8, 36], [7, 96], [14, 96]],
+  [[28, 96], [7, 90], [7, 96], [18, 96], [7, 82], [7, 108], [6, 90], [6, 96], [22, 96]],
+  [[12, 96], [6, 78], [6, 96], [8, 96], [8, 70], [8, 156], [10, 28], [8, 96], [12, 96]],
+  [[16, 96], [8, 74], [8, 96], [14, 96], [10, 44], [12, 128], [9, 70], [8, 96], [20, 96]],
+  [[8, 96], [5, 66], [5, 96], [5, 96], [6, 22], [7, 140], [6, 58], [5, 96], [7, 96], [5, 96], [5, 80], [5, 96], [4, 96], [6, 48], [7, 118], [6, 72], [5, 96], [12, 96]],
+  [[54, 96], [6, 70], [6, 96], [6, 96], [8, 10], [11, 150], [9, 42], [7, 96], [10, 96]],
+  [[14, 96], [10, 70], [12, 96], [12, 96], [16, 32], [18, 144], [14, 52], [10, 96], [16, 96]],
+  [[18, 96], [7, 84], [7, 96], [8, 96], [8, 50], [9, 124], [8, 72], [6, 96], [8, 40], [10, 96], [16, 96]],
+];
+
+function buildTrace(): { d: string; width: number } {
+  let x = 0;
+  let d = `M0 ${BASELINE}`;
+  for (const beat of BEATS) {
+    for (const [dx, y] of beat) {
+      x += dx;
+      d += `L${x} ${y}`;
+    }
+  }
+  return { d, width: x };
+}
+
+const TRACE = buildTrace();
+const VISIBLE = 300;
+
+function ChartTrace() {
+  const { d, width } = TRACE;
+  return (
+    <div className="trace-window">
+      <svg
+        className="trace-run"
+        style={{ width: `${(width * 2 / VISIBLE) * 100}%` }}
+        viewBox={`0 0 ${width * 2} 160`}
+        preserveAspectRatio="none"
+        aria-hidden
+      >
+        <path className="trace-line" d={d} />
+        <path className="trace-line" d={d} transform={`translate(${width} 0)`} />
+      </svg>
+    </div>
+  );
+}
+
+const DEMOS: { user: string; password: string; label: string; icon: keyof typeof Icon; hint: string }[] = [
+  { user: "p.iyer", password: "fgNFIPfWKdyEky1F", label: "Patient", icon: "Heart", hint: "Meera Iyer sees only her own vitals, and can pause sharing." },
+  { user: "dr.mehta", password: "3IRSj5E1GjC2-ICC", label: "Caretaker", icon: "Users", hint: "Dr. Mehta opens a worklist ranked by urgency. A 6-digit code comes next." },
+  { user: "admin", password: "uulUZKQa6Q!u*QEI", label: "Admin", icon: "Shield", hint: "Asha Admin manages people and the ledger, and cannot read vitals. A 6-digit code comes next." },
+];
+
+function DemoRoles({ active, onPick }: { active: string; onPick: (user: string, password: string) => void }) {
+  const chosen = DEMOS.find((d) => d.user === active);
+  return (
+    <div className="demo-roles">
+      <span className="label">Try a role</span>
+      <div className="demo-row">
+        {DEMOS.map((d) => {
+          const I = Icon[d.icon];
+          return (
+            <button key={d.user} type="button" className={active === d.user ? "demo-role on" : "demo-role"} onClick={() => onPick(d.user, d.password)}>
+              <I size={16} /> {d.label}
+            </button>
+          );
+        })}
+      </div>
+      {chosen && <p className="demo-hint">{chosen.hint}</p>}
+    </div>
+  );
+}
+
 export default function Login() {
   const { setMe } = useAuth();
   const nav = useNavigate();
@@ -65,11 +137,11 @@ export default function Login() {
       <section className="login-art">
         <div className="side-brand">
           <span className="mark"><Icon.Logo size={18} /></span>
-          <span className="name">SecureRPM</span>
+          <span className="name">Vitalcare</span>
         </div>
-        <svg className="wave" viewBox="0 0 600 120" preserveAspectRatio="none" height="140" width="100%">
-          <path d="M0 60 H170 L195 20 L225 105 L255 35 L275 60 H600" fill="none" stroke="currentColor" strokeWidth="3" />
-        </svg>
+        <div className="chart-hero">
+          <ChartTrace />
+        </div>
         <div className="pitch">
           <h1>Remote monitoring that keeps patient data private.</h1>
           <p>Vital signs are encrypted on the device, analysed on arrival, and visible only to the care team the patient has consented to.</p>
@@ -79,11 +151,12 @@ export default function Login() {
             <div><Icon.Ledger size={18} /> Tamper-evident ledger of every access</div>
           </div>
         </div>
-        <div className="legal">Educational project. Not a certified medical device.</div>
+        <DemoRoles active={username} onPick={(user, pass) => { setUsername(user); setPassword(pass); setError(""); setStep({ kind: "password" }); }} />
       </section>
 
       <section className="login-form">
         <div className="inner">
+          <div className="login-strip"><ChartTrace /></div>
           {step.kind === "password" ? (
             <>
               <h2>Sign in</h2>
@@ -163,6 +236,8 @@ export default function Login() {
             </>
           )}
         </div>
+        <p className="login-note">Staff enter a 6-digit code after the password. Patients sign in with a password only.</p>
+        <DemoRoles active={username} onPick={(user, pass) => { setUsername(user); setPassword(pass); setError(""); setStep({ kind: "password" }); }} />
       </section>
     </div>
   );

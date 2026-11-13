@@ -1,19 +1,22 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api, PatientProfile, saveFile, timeAgo } from "../api";
 import { useAuth } from "../App";
 import { Icon } from "../components/Icons";
-import { Monitor, PatientHeader } from "../components/Monitor";
-import { usePolling } from "../hooks";
+import { DeviceIcon } from "../components/ConnectDevice";
+import { ConnectionPill, Monitor, PatientHeader } from "../components/Monitor";
+import { useDeviceCatalog, usePolling } from "../hooks";
 
 export default function PatientHome() {
   const { me } = useAuth();
   const pid = me!.patient_id!;
   const { data: p, reload } = usePolling<PatientProfile>(`/api/patients/${pid}`, 30000);
   const [busy, setBusy] = useState(false);
+  const catalog = useDeviceCatalog();
 
   const exportData = async () => {
     const data = await api("/api/me/export");
-    saveFile(`securerpm-my-data-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2));
+    saveFile(`vitalcare-my-data-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2));
   };
 
   const toggleConsent = async () => {
@@ -42,15 +45,33 @@ export default function PatientHome() {
       </div>
       <div className="card pad">
         <h2>My devices</h2>
-        <ul className="device-list" style={{ marginTop: 12 }}>
-          {p.devices.filter((d) => d.active).map((d) => (
-            <li key={d.id}>
-              <span className="ico"><Icon.Watch size={17} /></span>
-              <div className="info"><b>{d.label}</b><span>Last seen {timeAgo(d.last_seen)}</span></div>
-            </li>
-          ))}
-        </ul>
-        <p className="muted xs" style={{ marginTop: 10 }}>To add a device, ask your clinician for a pairing code.</p>
+        {p.devices.filter((d) => d.active).length === 0 ? (
+          <p className="muted small" style={{ marginTop: 10 }}>No device is connected yet.</p>
+        ) : (
+          <ul className="device-list" style={{ marginTop: 12 }}>
+            {p.devices.filter((d) => d.active).map((d) => {
+              const t = catalog?.find((c) => c.id === d.device_type);
+              return (
+                <li key={d.id} className="patient-device">
+                  <span className="ico"><DeviceIcon name={t?.icon} size={17} /></span>
+                  <div className="info">
+                    <b>{d.label}</b>
+                    <span>{t ? `${t.name} · ` : ""}last reading {timeAgo(d.last_seen)}</span>
+                    <span className="pill-row"><ConnectionPill device={d} /></span>
+                    {t && t.patient_tips.length > 0 && (
+                      <ul className="tips">{t.patient_tips.map((tip) => <li key={tip}>{tip}</li>)}</ul>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="muted xs" style={{ marginTop: 10 }}>
+          Want to add a device? Ask your care team. They will give you a short code or a QR code to enter on the device.
+          If a reading stops arriving, check the device is switched on and near its gateway.{" "}
+          <Link to="/devices/guide">Help with devices</Link>
+        </p>
       </div>
       <div className="card pad">
         <h2>My details</h2>

@@ -58,11 +58,13 @@ def proof(code: str, pairing_id: str, public_key_pem: str) -> bytes:
     return hmac_sha512(normalize(code).encode(), canonical("RPM-pair-v1", pairing_id, public_key_pem))
 
 
-def create(db: Session, *, patient_id: int, label: str, created_by: int) -> tuple[PairingCode, str]:
+def create(db: Session, *, patient_id: int, label: str, created_by: int,
+           device_type: str | None = None) -> tuple[PairingCode, str]:
     code = new_code()
     pid = secrets.token_hex(8)
     blob, version = encrypt_with_master(code.encode(), f"pairing:{pid}")
-    pc = PairingCode(id=pid, patient_id=patient_id, label=label, code_enc=blob, key_version=version,
+    pc = PairingCode(id=pid, patient_id=patient_id, label=label, device_type=device_type,
+                     code_enc=blob, key_version=version,
                      created_by=created_by, expires_at=_now() + CODE_TTL)
     db.add(pc)
     db.commit()
@@ -91,6 +93,7 @@ def complete(db: Session, *, pairing_id: str, public_key_pem: str, proof_bytes: 
         raise PairingError(401, "Pairing proof does not match the code")
 
     device = Device(id=f"dev-{secrets.token_hex(6)}", patient_id=pc.patient_id, label=pc.label,
+                    device_type=pc.device_type,
                     public_key_pem=public_key_pem, paired_by=pc.created_by)
     db.add(device)
     pc.used_at, pc.device_id = _now(), device.id

@@ -40,9 +40,8 @@ PEOPLE: list[tuple[str, str, str, dict[str, str]]] = [
 ]
 # clinician -> patients
 ASSIGN = {"dr.mehta": ["p.sharma", "p.iyer", "p.khan"], "dr.rao": ["p.khan", "p.das"]}
-# history episodes so charts and alerts have something to show: patient -> (hours ago, kind)
-# This patient's device replays a real ICU stay from the MIMIC-III demo (if downloaded)
-REAL_PATIENT = "p.khan"
+# Devices of these patients replay real, de-identified ICU recordings when the datasets are downloaded.
+REAL_PATIENT = "p.khan"          # MIMIC-III demo stay
 
 
 def pick_mimic_stay() -> str:
@@ -51,6 +50,22 @@ def pick_mimic_stay() -> str:
     died = [(len(s["rows"]), k) for k, s in stays.items() if s["died_in_hospital"] and len(s["rows"]) >= 144]
     pool = died or [(len(s["rows"]), k) for k, s in stays.items()]
     return max(pool)[1]
+
+
+def pick_eicu_stays() -> dict[str, str]:
+    """Two eICU stays from different hospitals: one patient who died, one who went home.
+
+    Stays with measured temperature and at least 24 h of 5-minute data are preferred.
+    """
+    meta = realdata.load_eicu_meta()
+    def rank(item: tuple[str, dict]) -> tuple[bool, int]:
+        return (item[1]["temp_measured"], item[1]["rows"])
+    long = [kv for kv in meta.items() if kv[1]["rows"] >= 288]
+    died = sorted((kv for kv in long if kv[1]["died_in_hospital"]), key=rank, reverse=True)
+    lived = sorted((kv for kv in long if not kv[1]["died_in_hospital"]), key=rank, reverse=True)
+    first = died[0]
+    second = next(kv for kv in lived if kv[1]["hospital_id"] != first[1]["hospital_id"])
+    return {"p.iyer": f"eicu:{first[0]}", "p.das": f"eicu:{second[0]}"}
 
 
 HISTORY_EPISODES = {"p.khan": [(5, "hypoxia")], "p.iyer": [(14, "fever")], "p.sharma": [(9, "activity")]}
@@ -97,6 +112,7 @@ def main() -> None:
             db.add(Assignment(clinician_id=users[clin].id, patient_id=patient.id))
     db.commit()
 
+    eicu_sources = pick_eicu_stays() if realdata.eicu_available() else {}
     now = int(time.time())
     for username, *_ in PEOPLE:
         u = users[username]
@@ -106,6 +122,8 @@ def main() -> None:
         assert u.patient is not None
         if username == REAL_PATIENT and realdata.available()["mimic"]:
             source = f"mimic:{pick_mimic_stay()}"
+        elif username in eicu_sources:
+            source = eicu_sources[username]
         dev = services.provision_simulated_device(db, u.patient.id, "Wearable monitor",
                                                   created_by=users["admin"].id, source=source)
         priv = runner.keystore.private_key(dev.id)

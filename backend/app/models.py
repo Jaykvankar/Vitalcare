@@ -99,6 +99,8 @@ class Device(Base):
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     label: Mapped[str] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(16), default="device")  # device | import (historical upload batch)
+    # Catalog id from app/device_catalog.py (e.g. "pulse_oximeter"); a plain-language label, not used by crypto
+    device_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     public_key_pem: Mapped[str] = mapped_column(Text)
     last_seq: Mapped[int] = mapped_column(BigInteger, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -114,6 +116,7 @@ class PairingCode(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), index=True)
     label: Mapped[str] = mapped_column(String(64))
+    device_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     code_enc: Mapped[bytes] = mapped_column(LargeBinary)
     key_version: Mapped[int] = mapped_column(Integer)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

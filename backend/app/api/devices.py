@@ -1,7 +1,7 @@
 """Device pairing and revocation. Allowed for admins and for clinicians assigned to the patient."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ from ..security import audit, auth, pairing, rbac, server_keys
 from ..security.hashing import b64d, b64e
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
-pair_limiter = auth.RateLimiter(limit=20, window_s=60)
+
 
 
 def _can_manage(db: Session, user: User, patient_id: int) -> Patient:
@@ -26,7 +26,7 @@ def _can_manage(db: Session, user: User, patient_id: int) -> Patient:
 
 
 def _iso(dt: datetime | None) -> str | None:
-    return None if dt is None else (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+    return None if dt is None else (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).isoformat()
 
 
 @router.get("")
@@ -66,7 +66,7 @@ def code_status(pairing_id: str, user: User = Depends(auth.require_role("admin",
     if pc is None:
         raise HTTPException(404, "Not found")
     _can_manage(db, user, pc.patient_id)
-    expired = (pc.expires_at if pc.expires_at.tzinfo else pc.expires_at.replace(tzinfo=timezone.utc)) < datetime.now(timezone.utc)
+    expired = (pc.expires_at if pc.expires_at.tzinfo else pc.expires_at.replace(tzinfo=UTC)) < datetime.now(UTC)
     status = "paired" if pc.used_at else "locked" if pc.attempts >= pairing.MAX_ATTEMPTS else "expired" if expired else "waiting"
     return {"status": status, "device_id": pc.device_id}
 
@@ -80,7 +80,7 @@ class PairIn(BaseModel):
 @router.post("/pair")
 def pair(body: PairIn, request: Request, db: Session = Depends(get_db)) -> dict:
     """Called by the device itself (no user session). Authenticated by the HMAC proof of the code."""
-    pair_limiter.check(auth.client_ip(request))
+    auth.pair_limiter.check(auth.client_ip(request))
     try:
         device = pairing.complete(db, pairing_id=body.pairing_id, public_key_pem=body.public_key_pem,
                                   proof_bytes=b64d(body.proof))
@@ -102,7 +102,7 @@ def revoke(device_id: str, user: User = Depends(auth.require_role("admin", "clin
     if d is None:
         raise HTTPException(404, "Device not found")
     _can_manage(db, user, d.patient_id)
-    d.active, d.revoked_at = False, datetime.now(timezone.utc)
+    d.active, d.revoked_at = False, datetime.now(UTC)
     db.commit()
     audit.append("device_revoked", actor_id=user.id, actor=user.username, target=f"patient:{d.patient_id}",
                  detail=f"device={d.id}")

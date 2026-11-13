@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
@@ -24,7 +25,7 @@ def init_engine(url: str) -> Engine:
 
     if url.startswith("sqlite"):
         @event.listens_for(_engine, "connect")
-        def _sqlite_pragmas(dbapi_conn, _):  # noqa: ANN001
+        def _sqlite_pragmas(dbapi_conn, _):
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
             cur.execute("PRAGMA journal_mode=WAL")
@@ -39,7 +40,7 @@ def engine() -> Engine:
     return _engine
 
 
-def SessionLocal() -> Session:  # noqa: N802
+def SessionLocal() -> Session:
     assert _SessionLocal is not None, "init_engine() not called"
     return _SessionLocal()
 
@@ -53,11 +54,30 @@ def get_db() -> Iterator[Session]:
 
 
 def create_schema() -> None:
+    """Bring the database to the latest schema with Alembic, then install the audit guards.
+
+    Fresh database: run all migrations. A database created before Alembic was introduced:
+    add any missing columns once, then stamp it at the baseline and continue normally.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect
+
     from . import models  # noqa: F401  (register tables)
 
     eng = engine()
-    Base.metadata.create_all(eng)
-    _add_missing_columns(eng)
+    backend_dir = Path(__file__).resolve().parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    insp = inspect(eng)
+    legacy = insp.has_table("users") and not insp.has_table("alembic_version")
+    with eng.begin() as conn:
+        cfg.attributes["connection"] = conn
+        if legacy:
+            Base.metadata.create_all(conn)
+            _add_missing_columns(conn)
+            command.stamp(cfg, "0001_baseline")
+        command.upgrade(cfg, "head")
     _install_append_only_guards(eng)
 
 
@@ -82,19 +102,16 @@ def _install_append_only_guards(eng: Engine) -> None:
             ))
 
 
-def _add_missing_columns(eng: Engine) -> None:
-    """Tiny forward-only migration: add columns introduced after a database was created."""
+def _add_missing_columns(conn) -> None:
+    """One-off upgrade path for databases created before Alembic: add columns that were added later."""
     from sqlalchemy import inspect
 
-    from . import models  # noqa: F401
-
-    insp = inspect(eng)
-    with eng.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            if not insp.has_table(table.name):
-                continue
-            existing = {c["name"] for c in insp.get_columns(table.name)}
-            for col in table.columns:
-                if col.name not in existing:
-                    ddl = col.type.compile(dialect=eng.dialect)
-                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))
+    insp = inspect(conn)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name not in existing:
+                ddl = col.type.compile(dialect=conn.dialect)
+                conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}"))

@@ -36,7 +36,7 @@ def unwrap_dek(wrapped: bytes, patient_id: int, version: int) -> bytes:
     return aead.open_blob(key, wrapped, _dek_aad(patient_id, version))
 
 
-def patient_dek(patient) -> bytes:  # noqa: ANN001  (models.Patient)
+def patient_dek(patient) -> bytes:
     return unwrap_dek(patient.wrapped_dek, patient.id, patient.key_version)
 
 
@@ -51,7 +51,7 @@ def encrypt_reading(dek: bytes, vitals: dict, *, patient_id: int, device_id: str
     return aead.encrypt(dek, data, reading_aad(patient_id, device_id, seq, ts))
 
 
-def decrypt_reading(dek: bytes, reading) -> dict:  # noqa: ANN001  (models.Reading)
+def decrypt_reading(dek: bytes, reading) -> dict:
     data = aead.decrypt(
         dek, reading.nonce, reading.ciphertext,
         reading_aad(reading.patient_id, reading.device_id, reading.seq, reading.ts),
@@ -73,11 +73,11 @@ def decrypt_field(dek: bytes, blob: bytes | None, *, patient_id: int, field: str
     return aead.open_blob(dek, blob, canonical("field", patient_id, field)).decode()
 
 
-def encrypt_json(dek: bytes, obj, *, patient_id: int, field: str) -> bytes:  # noqa: ANN001
+def encrypt_json(dek: bytes, obj, *, patient_id: int, field: str) -> bytes:
     return aead.seal_blob(dek, json.dumps(obj).encode(), canonical("json", patient_id, field))
 
 
-def decrypt_json(dek: bytes, blob: bytes, *, patient_id: int, field: str):  # noqa: ANN201
+def decrypt_json(dek: bytes, blob: bytes, *, patient_id: int, field: str):
     return json.loads(aead.open_blob(dek, blob, canonical("json", patient_id, field)))
 
 

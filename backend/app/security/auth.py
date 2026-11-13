@@ -1,68 +1,116 @@
-"""Authentication: PBKDF2-HMAC-SHA-512 passwords, server-side sessions, TOTP (HMAC-SHA-512), lockout."""
+"""Authentication: PBKDF2-HMAC-SHA-512 passwords, server-side sessions, TOTP (HMAC-SHA-512),
+recovery codes, lockout, forced password change, and database-backed rate limiting.
+
+All security state (lockouts, TOTP replay guard, rate-limit counters) lives in the database,
+so it survives restarts and is shared by every server process.
+"""
 from __future__ import annotations
 
 import hashlib
 import secrets
-import threading
 import time
-from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pyotp
 from fastapi import Depends, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..db import get_db
-from ..models import Session_, User
+from ..db import SessionLocal, get_db
+from ..models import RateLimit, RecoveryCode, Session_, User
 from .crypto import decrypt_with_master, encrypt_with_master
-from .hashing import sha512_hex
+from .hashing import hash_password, sha512_hex, verify_password
 
 COOKIE = "rpm_session"
 MFA_ROLES = {"admin", "clinician"}
 MAX_FAILED = 5
 LOCK_MINUTES = 5
+RECOVERY_CODES = 10
+RECOVERY_ITERATIONS = 20_000  # codes are high-entropy random strings, so fewer iterations suffice
+MIN_PASSWORD = 12
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def _aware(dt: datetime | None) -> datetime | None:
-    if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+def _aware(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 # ---------------------------------------------------------------- rate limiting
 
 class RateLimiter:
-    """Sliding-window limiter kept in memory (single-process demo)."""
+    """Fixed-window counter stored in the database (shared across processes and restarts)."""
 
-    def __init__(self, limit: int, window_s: float):
-        self.limit, self.window = limit, window_s
-        self.hits: dict[str, deque] = defaultdict(deque)
-        self.lock = threading.Lock()
+    def __init__(self, name: str, limit: int, window_s: int):
+        self.name, self.limit, self.window = name, limit, window_s
 
     def check(self, key: str) -> None:
-        now = time.monotonic()
-        with self.lock:
-            q = self.hits[key]
-            while q and now - q[0] > self.window:
-                q.popleft()
-            if len(q) >= self.limit:
-                raise HTTPException(429, "Too many requests, slow down")
-            q.append(now)
+        window = int(time.time()) // self.window * self.window
+        full_key = f"{self.name}:{key}"[:128]
+        db = SessionLocal()
+        try:
+            for _ in range(3):
+                res = db.execute(
+                    update(RateLimit).where(RateLimit.key == full_key, RateLimit.window_start == window)
+                    .values(count=RateLimit.count + 1)
+                )
+                if res.rowcount == 0:
+                    try:
+                        db.add(RateLimit(key=full_key, window_start=window, count=1))
+                        db.commit()
+                        return
+                    except IntegrityError:
+                        db.rollback()
+                        continue
+                db.commit()
+                count = db.execute(
+                    select(RateLimit.count).where(RateLimit.key == full_key, RateLimit.window_start == window)
+                ).scalar_one()
+                if count > self.limit:
+                    raise HTTPException(429, "Too many requests, slow down")
+                return
+        finally:
+            db.close()
+
+    def reset(self) -> None:
+        db = SessionLocal()
+        try:
+            db.execute(delete(RateLimit).where(RateLimit.key.like(f"{self.name}:%")))
+            db.commit()
+        finally:
+            db.close()
 
 
-login_limiter = RateLimiter(limit=10, window_s=60)
-mfa_limiter = RateLimiter(limit=10, window_s=60)
-ingest_limiter = RateLimiter(limit=120, window_s=60)
+login_limiter = RateLimiter("login", limit=10, window_s=60)
+mfa_limiter = RateLimiter("mfa", limit=10, window_s=60)
+ingest_limiter = RateLimiter("ingest", limit=120, window_s=60)
+pair_limiter = RateLimiter("pair", limit=20, window_s=60)
+import_limiter = RateLimiter("import", limit=20, window_s=300)
 
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+# ---------------------------------------------------------------- passwords
+
+def check_password_policy(user: User, password: str) -> None:
+    if len(password) < MIN_PASSWORD:
+        raise HTTPException(422, f"Password must be at least {MIN_PASSWORD} characters")
+    if user.username.lower() in password.lower():
+        raise HTTPException(422, "Password must not contain your username")
+    if len(set(password)) < 6:
+        raise HTTPException(422, "Password is too repetitive")
+
+
+def set_password(user: User, password: str) -> None:
+    user.password_hash = hash_password(password, get_settings().pbkdf2_iterations)
+    user.password_changed_at = _now()
+    user.must_change_password = False
 
 
 # ---------------------------------------------------------------- TOTP
@@ -85,28 +133,66 @@ def store_totp_secret(user: User, secret: str) -> None:
 
 
 def load_totp_secret(user: User) -> str | None:
-    if not user.totp_secret_enc:
+    if not user.totp_secret_enc or user.totp_key_version is None:
         return None
     return decrypt_with_master(user.totp_secret_enc, f"totp:{user.id}", user.totp_key_version).decode()
 
 
-_last_totp_step: dict[int, int] = {}
-
-
-def verify_totp(user: User, code: str) -> bool:
+def verify_totp(db: Session, user: User, code: str) -> bool:
     secret = load_totp_secret(user)
-    if not secret or not code or not code.isdigit():
+    if not secret or not code or not code.isdigit() or len(code) != 6:
         return False
     t = totp(secret)
     now = time.time()
     for drift in (-1, 0, 1):  # allow one 30 s step of clock drift
         step = int(now // 30) + drift
         if secrets.compare_digest(t.at(step * 30), code):
-            if _last_totp_step.get(user.id, -1) >= step:
-                return False  # code already used: block replay
-            _last_totp_step[user.id] = step
-            return True
+            # Atomic replay guard: only succeeds if this step is newer than the last one used.
+            res = db.execute(update(User).where(User.id == user.id, User.totp_last_step < step)
+                             .values(totp_last_step=step))
+            db.commit()
+            return res.rowcount == 1
     return False
+
+
+# ---------------------------------------------------------------- recovery codes
+
+_RC_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def _norm_recovery(code: str) -> str:
+    return code.replace("-", "").replace(" ", "").upper()
+
+
+def issue_recovery_codes(db: Session, user: User) -> list[str]:
+    """Replace any existing codes with 10 new ones. Returned once; only hashes are stored."""
+    db.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user.id))
+    codes = []
+    for _ in range(RECOVERY_CODES):
+        raw = "".join(secrets.choice(_RC_ALPHABET) for _ in range(10))  # ~49 bits each
+        codes.append(f"{raw[:5]}-{raw[5:]}")
+        db.add(RecoveryCode(user_id=user.id, code_hash=hash_password(raw, RECOVERY_ITERATIONS)))
+    db.commit()
+    return codes
+
+
+def use_recovery_code(db: Session, user: User, code: str) -> bool:
+    raw = _norm_recovery(code)
+    if len(raw) != 10:
+        return False
+    for rc in db.execute(select(RecoveryCode).where(RecoveryCode.user_id == user.id,
+                                                    RecoveryCode.used_at.is_(None))).scalars():
+        if verify_password(raw, rc.code_hash):
+            res = db.execute(update(RecoveryCode).where(RecoveryCode.id == rc.id, RecoveryCode.used_at.is_(None))
+                             .values(used_at=_now()))
+            db.commit()
+            return res.rowcount == 1
+    return False
+
+
+def recovery_codes_left(db: Session, user: User) -> int:
+    return len(db.execute(select(RecoveryCode.id).where(RecoveryCode.user_id == user.id,
+                                                        RecoveryCode.used_at.is_(None))).all())
 
 
 # ---------------------------------------------------------------- sessions
@@ -146,6 +232,14 @@ def destroy_session(request: Request, db: Session, response: Response) -> None:
     response.delete_cookie(COOKIE, path="/")
 
 
+def revoke_other_sessions(db: Session, user: User, keep: Session_ | None) -> None:
+    q = update(Session_).where(Session_.user_id == user.id, Session_.revoked.is_(False))
+    if keep is not None:
+        q = q.where(Session_.token_hash != keep.token_hash)
+    db.execute(q.values(revoked=True))
+    db.commit()
+
+
 def pending_user(request: Request, db: Session = Depends(get_db)) -> tuple[User, Session_]:
     """Logged in with password, MFA may still be outstanding."""
     sess = _session_from_request(request, db)
@@ -157,16 +251,24 @@ def pending_user(request: Request, db: Session = Depends(get_db)) -> tuple[User,
     return user, sess
 
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+def authenticated(request: Request, db: Session = Depends(get_db)) -> tuple[User, Session_]:
+    """Password + MFA done; a forced password change may still be outstanding."""
     user, sess = pending_user(request, db)
     if user.role in MFA_ROLES and not sess.mfa_ok:
         raise HTTPException(401, "Multi-factor authentication required")
     sess.last_seen = _now()
     db.commit()
+    return user, sess
+
+
+def current_user(pair: tuple[User, Session_] = Depends(authenticated)) -> User:
+    user, _ = pair
+    if user.must_change_password:
+        raise HTTPException(403, "Password change required")
     return user
 
 
-def require_role(*roles: str):  # noqa: ANN201
+def require_role(*roles: str):
     def dep(user: User = Depends(current_user)) -> User:
         if user.role not in roles:
             raise HTTPException(403, "Not allowed for your role")
@@ -177,8 +279,7 @@ def require_role(*roles: str):  # noqa: ANN201
 # ---------------------------------------------------------------- lockout
 
 def is_locked(user: User) -> bool:
-    lu = _aware(user.locked_until)
-    return lu is not None and lu > _now()
+    return user.locked_until is not None and _aware(user.locked_until) > _now()
 
 
 def register_failure(db: Session, user: User) -> None:

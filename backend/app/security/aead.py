@@ -19,7 +19,7 @@ class DecryptionError(Exception):
 
 
 def new_key() -> bytes:
-    return AESGCM.generate_key(bit_length=256)
+    return AESGCM.generate_key(256)
 
 
 def encrypt(key: bytes, plaintext: bytes, aad: bytes) -> tuple[bytes, bytes]:

@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..models import Alert, Assignment, Device, Patient, Reading, User
+from ..readings import rollups
 from ..security import audit, auth, crypto, rbac
 
 router = APIRouter(prefix="/api", tags=["patients"])
@@ -23,12 +24,25 @@ MAX_POINTS = 240
 def _iso(dt: datetime | None) -> str | None:
     if dt is None:
         return None
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+    return (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).isoformat()
 
 
-def _summary(db: Session, p: Patient) -> dict:
-    open_alerts = db.scalar(select(func.count(Alert.id)).where(Alert.patient_id == p.id, Alert.status == "open"))
-    return {"id": p.id, "name": p.user.full_name, "band": p.last_band, "risk": p.last_score,
+def _alert_counts(db: Session, patient_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """{patient_id: (open alerts, escalated alerts)} in one query."""
+    if not patient_ids:
+        return {}
+    rows = db.execute(
+        select(Alert.patient_id, func.count(Alert.id), func.count(Alert.escalated_at))
+        .where(Alert.patient_id.in_(patient_ids), Alert.status == "open").group_by(Alert.patient_id)
+    ).all()
+    return {pid: (n, esc) for pid, n, esc in rows}
+
+
+def _summary(db: Session, p: Patient, counts: dict[int, tuple[int, int]] | None = None) -> dict:
+    if counts is None:
+        counts = _alert_counts(db, [p.id])
+    open_alerts, escalated = counts.get(p.id, (0, 0))
+    return {"escalated_alerts": escalated, "id": p.id, "name": p.user.full_name, "band": p.last_band, "risk": p.last_score,
             "last_reading_at": _iso(p.last_reading_at), "open_alerts": open_alerts,
             "consent_active": p.consent_active, "data_source": _source(p.id)}
 
@@ -47,10 +61,11 @@ def _source(patient_id: int) -> str:
 def worklist(user: User = Depends(auth.require_role("clinician")), db: Session = Depends(get_db)) -> list[dict]:
     """Assigned patients sorted by risk (critical first, then highest model score)."""
     rows = db.execute(
-        select(Patient).join(Assignment, Assignment.patient_id == Patient.id)
-        .where(Assignment.clinician_id == user.id)
+        select(Patient).options(joinedload(Patient.user)).join(Assignment, Assignment.patient_id == Patient.id)
+        .where(Assignment.clinician_id == user.id, Patient.erased_at.is_(None))
     ).scalars().all()
-    items = [_summary(db, p) for p in rows]
+    counts = _alert_counts(db, [p.id for p in rows])
+    items = [_summary(db, p, counts) for p in rows]
     items.sort(key=lambda x: (BAND_ORDER.get(x["band"], 3), -(x["risk"] or 0), -x["open_alerts"]))
     return items
 
@@ -62,7 +77,7 @@ def profile(patient_id: int, user: User = Depends(auth.require_role("clinician",
     out = _summary(db, p)
     out["devices"] = [
         {"id": d.id, "label": d.label, "active": d.active, "last_seen": _iso(d.last_seen)}
-        for d in db.execute(select(Device).where(Device.patient_id == p.id)).scalars()
+        for d in db.execute(select(Device).where(Device.patient_id == p.id, Device.kind == "device")).scalars()
     ]
     out["consent_changed_at"] = _iso(p.consent_changed_at)
     if p.consent_active or user.role == "patient":
@@ -74,25 +89,34 @@ def profile(patient_id: int, user: User = Depends(auth.require_role("clinician",
 
 
 @router.get("/patients/{patient_id}/readings")
-def readings(patient_id: int, range: str = Query("6h", pattern="^(6h|24h|7d)$"),  # noqa: A002
+def readings(patient_id: int, range: str = Query("6h", pattern="^(6h|24h|7d)$"),
              user: User = Depends(auth.require_role("clinician", "patient")),
              db: Session = Depends(get_db)) -> dict:
+    """6 h: every reading. 24 h / 7 d: encrypted 5-minute rollups (a few hundred decrypts, not 100k)."""
     p = rbac.patient_for_read(db, user, patient_id)
     since = int(time.time()) - RANGES[range]
-    rows = db.execute(
-        select(Reading).where(Reading.patient_id == p.id, Reading.ts >= since).order_by(Reading.ts)
-    ).scalars().all()
     dek = crypto.patient_dek(p)
-    points = []
-    for r in rows:
-        v = crypto.decrypt_reading(dek, r)
-        points.append({"ts": r.ts, **v, "band": r.band, "risk": r.risk_score,
-                       "reasons": [c for c in r.reason_codes.split(",") if c]})
+    last = db.execute(select(Reading).where(Reading.patient_id == p.id)
+                      .order_by(Reading.ts.desc(), Reading.id.desc()).limit(1)).scalar_one_or_none()
+    latest = _point(dek, last) if last else None
+    if range == "6h":
+        rows = db.execute(
+            select(Reading).where(Reading.patient_id == p.id, Reading.ts >= since).order_by(Reading.ts)
+        ).scalars().all()
+        points = [_point(dek, r) for r in rows]
+        count = len(points)
+    else:
+        points = rollups.series(db, patient_id=p.id, dek=dek, since=since)
+        count = sum(pt.pop("n") for pt in points)
     audit.append("decrypt_readings", actor_id=user.id, actor=user.username, target=f"patient:{p.id}",
                  detail=f"range={range}")
-    latest = points[-1] if points else None
-    return {"patient_id": p.id, "range": range, "count": len(points),
-            "latest": latest, "points": _downsample(points)}
+    return {"patient_id": p.id, "range": range, "count": count, "latest": latest, "points": _downsample(points)}
+
+
+def _point(dek: bytes, r: Reading) -> dict:
+    v = crypto.decrypt_reading(dek, r)
+    return {"ts": r.ts, **v, "band": r.band, "risk": r.risk_score,
+            "reasons": [c for c in r.reason_codes.split(",") if c]}
 
 
 def _downsample(points: list[dict]) -> list[dict]:
@@ -127,6 +151,7 @@ def alerts(patient_id: int, status: str = Query("all", pattern="^(open|all)$"),
             "id": a.id, "reason_code": a.reason_code, "severity": a.severity, "status": a.status,
             "first_seen": _iso(a.first_seen), "last_seen": _iso(a.last_seen), "occurrences": a.occurrences,
             "acknowledged_by": ack_by.full_name if ack_by else None, "acknowledged_at": _iso(a.acknowledged_at),
+            "escalated_at": _iso(a.escalated_at),
             "note": crypto.decrypt_field(dek, a.ack_note_enc, patient_id=p.id, field=f"ack:{a.id}"),
         })
     return out
@@ -147,7 +172,7 @@ def acknowledge(alert_id: int, body: AckIn, user: User = Depends(auth.require_ro
         raise HTTPException(409, "Alert already acknowledged")
     a.status = "acknowledged"
     a.acknowledged_by = user.id
-    a.acknowledged_at = datetime.now(timezone.utc)
+    a.acknowledged_at = datetime.now(UTC)
     if body.note.strip():
         a.ack_note_enc = crypto.encrypt_field(crypto.patient_dek(p), body.note.strip(),
                                               patient_id=p.id, field=f"ack:{a.id}")
@@ -169,8 +194,34 @@ def set_consent(body: ConsentIn, user: User = Depends(auth.require_role("patient
         raise HTTPException(404, "No patient record")
     if p.consent_active != body.active:
         p.consent_active = body.active
-        p.consent_changed_at = datetime.now(timezone.utc)
+        p.consent_changed_at = datetime.now(UTC)
         db.commit()
         audit.append("consent_granted" if body.active else "consent_revoked",
                      actor_id=user.id, actor=user.username, target=f"patient:{p.id}")
     return {"consent_active": p.consent_active}
+
+
+
+@router.get("/me/export")
+def export_my_data(user: User = Depends(auth.require_role("patient")), db: Session = Depends(get_db)) -> dict:
+    """Right of access: everything held about the signed-in patient, decrypted, as one JSON document."""
+    p = rbac.patient_for_read(db, user, user.patient.id if user.patient else -1, need_consent=False)
+    dek = crypto.patient_dek(p)
+    rows = db.execute(select(Reading).where(Reading.patient_id == p.id).order_by(Reading.ts)).scalars().all()
+    alerts_rows = db.execute(select(Alert).where(Alert.patient_id == p.id).order_by(Alert.first_seen)).scalars().all()
+    audit.append("data_exported", actor_id=user.id, actor=user.username, target=f"patient:{p.id}",
+                 detail=f"readings={len(rows)}")
+    return {
+        "exported_at": datetime.now(UTC).isoformat(),
+        "patient": {"name": user.full_name, "username": user.username,
+                    **{f: crypto.decrypt_field(dek, getattr(p, f"{f}_enc"), patient_id=p.id, field=f)
+                       for f in ("dob", "phone", "address")},
+                    "consent_active": p.consent_active, "consent_changed_at": _iso(p.consent_changed_at)},
+        "devices": [{"id": d.id, "label": d.label, "kind": d.kind, "active": d.active, "paired_at": _iso(d.created_at)}
+                    for d in db.execute(select(Device).where(Device.patient_id == p.id)).scalars()],
+        "readings": [{"time": datetime.fromtimestamp(r.ts, UTC).isoformat(), "device": r.device_id,
+                      **crypto.decrypt_reading(dek, r), "band": r.band, "ai_risk": r.risk_score,
+                      "reasons": r.reason_codes} for r in rows],
+        "alerts": [{"reason": a.reason_code, "severity": a.severity, "status": a.status,
+                    "first_seen": _iso(a.first_seen), "last_seen": _iso(a.last_seen)} for a in alerts_rows],
+    }

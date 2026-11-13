@@ -1,22 +1,27 @@
+# Production-like stack: API + PostgreSQL over HTTPS on :8443.
+#   1. python scripts/init_env.py && python scripts/gen_dev_cert.py   (or mount your hospital's real cert)
+#   2. docker compose up --build -d
+#   3. docker compose run --rm api python scripts/create_admin.py --username it.admin --name "IT Admin"
 services:
   db:
     image: postgres:17
     environment:
       POSTGRES_DB: rpm
       POSTGRES_USER: rpm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-locally}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rpm"]
       interval: 5s
       retries: 10
+    restart: unless-stopped
 
   api:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://rpm:${POSTGRES_PASSWORD:-change-me-locally}@db:5432/rpm
+      DATABASE_URL: postgresql+psycopg://rpm:${POSTGRES_PASSWORD}@db:5432/rpm
       RPM_SELF_URL: https://localhost:8443
       RPM_TLS_VERIFY: /app/certs/dev-cert.pem
     volumes:
@@ -28,6 +33,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

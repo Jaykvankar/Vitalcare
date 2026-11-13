@@ -6,7 +6,7 @@ Writes certs/dev-cert.pem and certs/dev-key.pem (gitignored).
 import datetime
 import ipaddress
 
-import _path  # noqa: F401
+import _path
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -18,7 +18,7 @@ out.mkdir(exist_ok=True)
 key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
 name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
                   x509.NameAttribute(NameOID.ORGANIZATION_NAME, "SecureRPM dev")])
-now = datetime.datetime.now(datetime.timezone.utc)
+now = datetime.datetime.now(datetime.UTC)
 cert = (
     x509.CertificateBuilder()
     .subject_name(name).issuer_name(name).public_key(key.public_key())

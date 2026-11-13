@@ -12,3 +12,24 @@ frontend/dist/
 data/real/
 device_state.json
 *.tsbuildinfo
+.e2e/
+frontend/test-results/
+frontend/playwright-report/
+frontend/coverage/
+.coverage
+htmlcov/
+
+# AI assistant / agent files (never committed)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.claude.json
+.mcp.json
+AGENTS.md
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.continue/
+.codeium/
+.github/copilot-instructions.md

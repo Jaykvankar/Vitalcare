@@ -94,11 +94,30 @@ Pairing from the command line:
 .venv\Scripts\python scripts\device_client.py stream --source synthetic
 ```
 
+## Onboarding a real hospital
+
+1. Run `python scripts/init_env.py`, set up TLS certs, then run `python scripts/create_admin.py --username it.admin --name "IT Admin"`. This creates no demo data.
+2. Admin → **Bulk import**: upload one CSV of staff and patients with care teams. Check the preview, then create. Everyone gets a temporary password and must change it at first sign-in.
+3. Clinicians import past vital signs per patient (patient record → **Import past readings**) and pair devices with one-time codes.
+
+See [docs/user_guide.md](docs/user_guide.md), [docs/architecture.md](docs/architecture.md) and [docs/threat_model.md](docs/threat_model.md).
+
 ## Tests and tools
 
 ```bash
-cd backend && ..\.venv\Scripts\python -m pytest -q
+cd backend && ..\.venv\Scripts\python -m pytest -q --cov
 ```
+```bash
+cd backend && ..\.venv\Scriptsuff check . ../scripts && ..\.venv\Scripts\mypy app
+```
+```bash
+cd frontend && npm run lint && npm run typecheck && npm test
+```
+```bash
+cd frontend && npm run e2e
+```
+
+`npm run e2e` starts a throw-away seeded server on port 8010 and drives it with your installed Chrome (`RPM_E2E_CHANNEL=msedge` to use Edge). CI (`.github/workflows/ci.yml`) runs all of these on every push. Install dev tools with `pip install -r backend/requirements-dev.txt`, plus the optional git hooks in `.pre-commit-config.yaml`.
 Covers:
 - **Crypto:** AES-GCM round trips, tamper and AAD swap, DH safe-prime check, sealing, RSA and ECDSA, PBKDF2, master-key rotation, model hash pin.
 - **Ingest:** bad signature, modified ciphertext, replay, stale timestamp, hypoxia → critical alert.

@@ -8,20 +8,20 @@ measures how the rules, NEWS2 and the model behave on real ICU vital signs.
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
 from .features import features_and_update, new_state
 from .infer import band_for, load_model
-from .realdata import available, bidmc_records, load_bidmc, load_mimic, PROJECT_DIR
+from .realdata import PROJECT_DIR, available, bidmc_records, load_bidmc, load_mimic
 from .rules import evaluate_rules, news2
 
 REFRACTORY_H = 4
 
 
-def run_sequence(rows: list[dict], model) -> dict:  # noqa: ANN001
+def run_sequence(rows: list[dict], model) -> dict:
     state = new_state()
     feats, n2, rules = [], [], []
     for r in rows:
@@ -31,8 +31,8 @@ def run_sequence(rows: list[dict], model) -> dict:  # noqa: ANN001
         n2.append(news2(v))
         rules.append(evaluate_rules(v))
     probs = model.predict_proba(np.array(feats))[:, 1]
-    bands = [band_for(rl, float(p), n)[0] for rl, p, n in zip(rules, probs, n2)]
-    bands_rules = [band_for(rl, 0.0, n)[0] for rl, n in zip(rules, n2)]
+    bands = [band_for(rl, float(p), n)[0] for rl, p, n in zip(rules, probs, n2, strict=False)]
+    bands_rules = [band_for(rl, 0.0, n)[0] for rl, n in zip(rules, n2, strict=False)]
     return {"prob": probs, "news2": np.array(n2), "bands": bands, "bands_rules": bands_rules}
 
 
@@ -48,14 +48,15 @@ def events(flags: list[bool], refractory: int) -> int:
     return count
 
 
-def auc(y, s) -> float:  # noqa: ANN001
+def auc(y, s) -> float:
     return float(roc_auc_score(y, s)) if len(set(y)) == 2 else float("nan")
 
 
-def mimic_section(model) -> str:  # noqa: ANN001
+def mimic_section(model) -> str:
     stays = load_mimic()
-    y, first24 = [], {"news2_max": [], "prob_mean": [], "crit_frac": [], "crit_frac_rules": []}
-    last24 = {"news2_max": [], "prob_mean": [], "crit_frac": []}
+    y: list[int] = []
+    first24: dict[str, list[float]] = {"news2_max": [], "prob_mean": [], "crit_frac": [], "crit_frac_rules": []}
+    last24: dict[str, list[float]] = {"news2_max": [], "prob_mean": [], "crit_frac": []}
     hours = crit_events = crit_events_rules = 0
     crit_hours = 0
     for s in stays.values():
@@ -103,7 +104,7 @@ ICU patients are sick, so a high critical share is expected. Ward patients weari
 """
 
 
-def bidmc_section(model) -> str:  # noqa: ANN001
+def bidmc_section(model) -> str:
     recs = bidmc_records()
     rows_total, flagged_rules, flagged_model = 0, 0, 0
     per_rec = []
@@ -136,7 +137,7 @@ def main() -> None:
     have = available()
     parts = [f"""# Real-data evaluation
 
-Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `backend/app/ml/eval_real.py`.
+Generated {datetime.now(UTC):%Y-%m-%d %H:%M UTC} by `backend/app/ml/eval_real.py`.
 
 **What this does and does not show.** The deterioration model is trained on *synthetic* episodes
 (see `model_report.md`), because no open dataset has bedside-labelled "deterioration started here" markers.

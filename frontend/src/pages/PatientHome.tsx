@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, PatientProfile, timeAgo } from "../api";
+import { api, PatientProfile, saveFile, timeAgo } from "../api";
 import { useAuth } from "../App";
 import { Icon } from "../components/Icons";
 import { Monitor, PatientHeader } from "../components/Monitor";
@@ -10,6 +10,11 @@ export default function PatientHome() {
   const pid = me!.patient_id!;
   const { data: p, reload } = usePolling<PatientProfile>(`/api/patients/${pid}`, 30000);
   const [busy, setBusy] = useState(false);
+
+  const exportData = async () => {
+    const data = await api("/api/me/export");
+    saveFile(`securerpm-my-data-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2));
+  };
 
   const toggleConsent = async () => {
     if (!p) return;
@@ -67,6 +72,7 @@ export default function PatientHome() {
           <h1>Hello, {me!.full_name.split(" ")[0]}</h1>
           <p className="sub">Readings from your monitor are encrypted on the device and stay encrypted in storage.</p>
         </div>
+        <button className="btn secondary" onClick={exportData}><Icon.Database size={16} /> Download my data</button>
       </div>
       {p && <PatientHeader p={p} />}
       {p && <Monitor patientId={pid} patientName={p.name} canAck={false} side={side} />}

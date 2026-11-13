@@ -22,6 +22,7 @@ def env(tmp_path_factory):
         "RPM_SIM_KEYSTORE": str(tmp / "sim" / "keystore.json"),
         "RPM_SIM_PASSPHRASE": "test-passphrase",
         "RPM_ALLOWED_ORIGINS": "https://testserver",
+        "RPM_RUN_JOBS": "false",
     })
     from app import config
     from app.security import server_keys
@@ -33,7 +34,6 @@ def env(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def app_client(env):
-    from fastapi.testclient import TestClient
 
     from app.main import create_app, init_backend
 
@@ -89,7 +89,6 @@ def client_for(world):
     import pyotp
     from fastapi.testclient import TestClient
 
-    from app.security import auth
 
     def make(username: str):
         c = TestClient(world["app"], base_url="https://testserver")
@@ -98,10 +97,28 @@ def client_for(world):
         assert r.status_code == 200, r.text
         if r.json()["mfa"] == "verify":
             totp = pyotp.TOTP(world["totp"][username], digest=hashlib.sha512)
-            # Tests log in many times within one 30 s step; clear the replay guard between logins.
-            auth._last_totp_step.clear()
+            # Tests log in many times within one 30 s step; reset the (database) replay guard.
+            from sqlalchemy import update
+
+            from app.db import SessionLocal
+            from app.models import User
+
+            db = SessionLocal()
+            db.execute(update(User).values(totp_last_step=0))
+            db.commit()
+            db.close()
             r = c.post("/api/auth/mfa", json={"code": totp.at(time.time())})
             assert r.status_code == 200, r.text
         return c
 
     return make
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits(request):
+    """Rate limits are stored in the database now; start every test with fresh windows."""
+    if "world" in request.fixturenames or "client_for" in request.fixturenames:
+        from app.security import auth
+
+        for limiter in (auth.login_limiter, auth.mfa_limiter, auth.ingest_limiter, auth.pair_limiter, auth.import_limiter):
+            limiter.reset()

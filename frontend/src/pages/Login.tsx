@@ -4,8 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, Me } from "../api";
 import { homeFor, useAuth } from "../App";
 import { Icon } from "../components/Icons";
+import { RecoveryCodes } from "./Account";
 
-type Step = { kind: "password" } | { kind: "verify" } | { kind: "enroll"; uri: string; secret: string };
+type Step = { kind: "password" } | { kind: "verify" } | { kind: "enroll"; uri: string; secret: string } | { kind: "codes"; codes: string[]; user: Me };
 
 export default function Login() {
   const { setMe } = useAuth();
@@ -16,6 +17,7 @@ export default function Login() {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [useRecovery, setUseRecovery] = useState(false);
 
   const done = (me: Me) => {
     setMe(me);
@@ -47,8 +49,9 @@ export default function Login() {
     setBusy(true);
     setError("");
     try {
-      const r = await api<{ user: Me }>("/api/auth/mfa", { method: "POST", body: { code } });
-      done(r.user);
+      const r = await api<{ user: Me; recovery_codes: string[] | null }>("/api/auth/mfa", { method: "POST", body: { code } });
+      if (r.recovery_codes) setStep({ kind: "codes", codes: r.recovery_codes, user: r.user });
+      else done(r.user);
     } catch (err) {
       setError((err as ApiError).message);
       setCode("");
@@ -100,6 +103,12 @@ export default function Login() {
                 </button>
               </form>
             </>
+          ) : step.kind === "codes" ? (
+            <>
+              <h2>Two-step sign-in is on</h2>
+              <p className="sub">One last thing: your recovery codes.</p>
+              <RecoveryCodes codes={step.codes} onDone={() => done(step.user)} />
+            </>
           ) : (
             <>
               <h2>{step.kind === "enroll" ? "Set up two-step sign-in" : "Two-step verification"}</h2>
@@ -115,24 +124,38 @@ export default function Login() {
                     <code className="secret">{step.secret}</code>
                   </div>
                 )}
-                <label className="field">
-                  Authentication code
-                  <input
-                    autoFocus
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    value={code}
-                    style={{ letterSpacing: "0.3em", fontFamily: "var(--mono)", fontSize: "1.1rem" }}
-                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                    required
-                  />
-                </label>
+                {useRecovery ? (
+                  <label className="field">
+                    Recovery code
+                    <input autoFocus autoComplete="off" placeholder="XXXXX-XXXXX" maxLength={11} value={code}
+                      style={{ letterSpacing: "0.12em", fontFamily: "var(--mono)", fontSize: "1.05rem" }}
+                      onChange={(e) => setCode(e.target.value.toUpperCase())} required />
+                  </label>
+                ) : (
+                  <label className="field">
+                    Authentication code
+                    <input
+                      autoFocus
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      pattern="[0-9]{6}"
+                      maxLength={6}
+                      value={code}
+                      style={{ letterSpacing: "0.3em", fontFamily: "var(--mono)", fontSize: "1.1rem" }}
+                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                      required
+                    />
+                  </label>
+                )}
                 {error && <div className="notice error">{error}</div>}
-                <button className="btn primary block" disabled={busy || code.length !== 6}>
+                <button className="btn primary block" disabled={busy || (useRecovery ? code.replace("-", "").length !== 10 : code.length !== 6)}>
                   Verify and sign in
                 </button>
+                {step.kind === "verify" && (
+                  <button type="button" className="btn ghost block" onClick={() => { setUseRecovery(!useRecovery); setCode(""); setError(""); }}>
+                    {useRecovery ? "Use my authenticator app" : "Lost your phone? Use a recovery code"}
+                  </button>
+                )}
                 <button type="button" className="btn ghost block" onClick={() => { setStep({ kind: "password" }); setError(""); }}>
                   Use a different account
                 </button>

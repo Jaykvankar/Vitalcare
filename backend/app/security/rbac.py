@@ -31,6 +31,8 @@ def patient_for_read(db: Session, user: User, patient_id: int, *, need_consent: 
     # Same 404 whether the patient does not exist or is not yours: no ID probing.
     if patient is None or not can_access_patient(db, user, patient):
         raise HTTPException(404, "Patient not found")
+    if patient.erased_at is not None:
+        raise HTTPException(410, "This patient's record has been erased")
     # Consent governs processing/sharing by others; patients can always see their own record.
     if need_consent and user.role != "patient" and not patient.consent_active:
         raise HTTPException(403, "Patient has revoked consent for data processing")

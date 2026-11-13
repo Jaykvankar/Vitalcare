@@ -77,7 +77,7 @@ def private_pem(key) -> bytes:
     )
 
 
-def load_private_pem(pem: bytes):
+def load_private_pem(pem: bytes):  # returns the key type stored in the PEM
     return serialization.load_pem_private_key(pem, password=None)
 
 

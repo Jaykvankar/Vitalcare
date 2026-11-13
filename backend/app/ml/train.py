@@ -8,7 +8,7 @@ Patients are split into train/test groups so no patient appears in both (no leak
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -72,15 +72,15 @@ def _alarm_events(alarm: np.ndarray) -> list[int]:
     return events
 
 
-def system_eval(model, data, use_model: bool) -> dict:  # noqa: ANN001
+def system_eval(model, data, use_model: bool) -> dict:
     detected = total = 0
     delays: list[int] = []
     false_any = false_crit = 0
     patient_days = 0.0
-    for _, X, y, kinds, vitals in data:
+    for _, X, _y, kinds, vitals in data:
         probs = model.predict_proba(X)[:, 1] if use_model else np.zeros(len(X))
         bands = [band_for(evaluate_rules(v), float(p) if use_model else 0.0, news2(v))[0]
-                 for v, p in zip(vitals, probs)]
+                 for v, p in zip(vitals, probs, strict=False)]
         alarm = np.array([b != "normal" for b in bands])
         crit = np.array([b == "critical" for b in bands])
         for s, e, _ in episodes(kinds):
@@ -140,7 +140,7 @@ def main() -> None:
 
     report = f"""# Risk model report
 
-Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `backend/app/ml/train.py`.
+Generated {datetime.now(UTC):%Y-%m-%d %H:%M UTC} by `backend/app/ml/train.py`.
 
 ## Setup
 - Model: scikit-learn `HistGradientBoostingClassifier` (class-balanced), threshold {ML_THRESHOLD}.

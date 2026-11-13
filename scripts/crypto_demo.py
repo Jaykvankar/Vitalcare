@@ -9,12 +9,12 @@ import os
 import _path  # noqa: F401
 
 os.environ.setdefault("RPM_MASTER_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-from app.readings.ingest import signed_message  # noqa: E402
-from app.security import aead, sealing, signatures  # noqa: E402
-from app.security.hashing import hash_password, sha512_hex, verify_password  # noqa: E402
+from app.readings.ingest import signed_message
+from app.security import aead, sealing, signatures
+from app.security.hashing import hash_password, sha512_hex, verify_password
 
 
-def show(title: str, value) -> None:  # noqa: ANN001
+def show(title: str, value) -> None:
     text = value.hex() if isinstance(value, bytes) else str(value)
     print(f"  {title:<34} {text[:96]}{'...' if len(text) > 96 else ''}")
 

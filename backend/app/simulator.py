@@ -77,13 +77,13 @@ class Keystore:
             self.devices[device_id]["offset"] = offset  # where a real-data replay continues from
             self._save()
 
-    def private_key(self, device_id: str):  # noqa: ANN201
+    def private_key(self, device_id: str):
         return signatures.load_private_pem(self.devices[device_id]["private_pem"].encode())
 
 
 # ---------------------------------------------------------------- packets
 
-def build_packet(device_id: str, private_key, server_pub_raw: bytes, vitals: dict,  # noqa: ANN001
+def build_packet(device_id: str, private_key, server_pub_raw: bytes, vitals: dict,
                  *, ts: int, seq: int) -> dict:
     from .readings.ingest import PROTOCOL_VERSION, signed_message
 
@@ -105,7 +105,7 @@ def pairing_request(pairing_id: str, code: str) -> tuple[bytes, dict]:
     return signatures.private_pem(key), body
 
 
-def stream_for(device_id: str, source: str = "synthetic", start: int = 0):  # noqa: ANN201
+def stream_for(device_id: str, source: str = "synthetic", start: int = 0) -> PatientStream | realdata.ReplayStream:
     real = realdata.stream_for_source(source, start) if source != "synthetic" else None
     if real is not None:
         return real
@@ -121,7 +121,7 @@ class SimulatorRunner:
     def __init__(self, interval: float = 5.0) -> None:
         self.interval = interval
         self.enabled: dict[int, bool] = {}          # patient_id -> on/off
-        self.streams: dict[str, object] = {}
+        self.streams: dict[str, PatientStream | realdata.ReplayStream] = {}
         self.last_result: dict[int, str] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -187,7 +187,10 @@ class SimulatorRunner:
 
         db = SessionLocal()
         try:
-            patient_id = db.get(Device, device_id).patient_id
+            device = db.get(Device, device_id)
+            if device is None:
+                raise RuntimeError("pairing succeeded but the device is missing")
+            patient_id = device.patient_id
         finally:
             db.close()
         self.keystore.add(device_id, patient_id, private_pem, source)
@@ -221,7 +224,8 @@ class SimulatorRunner:
                             continue
                         stream = self.streams.get(dev_id)
                         if stream is None:
-                            stream = self.streams[dev_id] = stream_for(dev_id, info.get("source", "synthetic"), info.get("offset", 0))
+                            source, offset = info.get("source", "synthetic"), info.get("offset", 0)
+                            stream = self.streams[dev_id] = stream_for(dev_id, source, offset)
                         vitals, _, _ = stream.step()
                         pkt = build_packet(dev_id, self.keystore.private_key(dev_id), server_pub, vitals,
                                            ts=int(time.time()), seq=self._next_seq(dev_id))

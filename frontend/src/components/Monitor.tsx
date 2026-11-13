@@ -262,6 +262,7 @@ export function AlertList({ patientId, canAck }: { patientId: number; canAck: bo
                     {REASON_LABELS[a.reason_code] ?? a.reason_code}
                     <span className="code">{a.reason_code}</span>
                     {a.status === "open" ? <BandBadge band={a.severity} /> : <span className="tag ok">Acknowledged</span>}
+                    {a.status === "open" && a.escalated_at && <span className="tag danger">Escalated</span>}
                   </div>
                   <div className="muted small">
                     First {timeAgo(a.first_seen)} · last {timeAgo(a.last_seen)} · {a.occurrences} reading{a.occurrences === 1 ? "" : "s"}

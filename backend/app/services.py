@@ -14,11 +14,14 @@ ROLES = ("admin", "clinician", "patient")
 
 
 def create_user(db: Session, *, username: str, full_name: str, role: str, password: str,
-                dob: str | None = None, phone: str | None = None, address: str | None = None) -> User:
+                dob: str | None = None, phone: str | None = None, address: str | None = None,
+                must_change_password: bool = False, commit: bool = True,
+                password_hash: str | None = None) -> User:
     if role not in ROLES:
         raise ValueError("invalid role")
     user = User(username=username.strip().lower(), full_name=full_name.strip(), role=role,
-                password_hash=hash_password(password, get_settings().pbkdf2_iterations))
+                password_hash=password_hash or hash_password(password, get_settings().pbkdf2_iterations),
+                must_change_password=must_change_password)
     db.add(user)
     db.flush()
     if role == "patient":
@@ -30,8 +33,11 @@ def create_user(db: Session, *, username: str, full_name: str, role: str, passwo
         patient.dob_enc = crypto.encrypt_field(dek, dob, patient_id=patient.id, field="dob")
         patient.phone_enc = crypto.encrypt_field(dek, phone, patient_id=patient.id, field="phone")
         patient.address_enc = crypto.encrypt_field(dek, address, patient_id=patient.id, field="address")
-    db.commit()
-    db.refresh(user)
+    if commit:
+        db.commit()
+        db.refresh(user)
+    else:
+        db.flush()
     return user
 
 

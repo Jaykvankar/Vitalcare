@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -23,6 +24,7 @@ from ..ml.rules import validate
 from ..models import Alert, Device, Patient, Reading
 from ..security import audit, crypto, sealing, server_keys, signatures
 from ..security.hashing import b64d, canonical
+from . import rollups
 
 PROTOCOL_VERSION = 1
 
@@ -84,7 +86,10 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
         raise _reject(409, "replayed or out-of-order sequence number", pkt.device_id)
 
     patient = db.get(Patient, device.patient_id)
-    if patient is None or not patient.consent_active:
+    if patient is None or patient.erased_at is not None:
+        db.rollback()
+        raise IngestError(410, "patient record has been erased")
+    if not patient.consent_active:
         db.rollback()
         raise IngestError(403, "patient consent is not active")
 
@@ -119,31 +124,42 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
                    nonce=r_nonce, ciphertext=r_ct, band=result.band, risk_score=result.risk,
                    reason_codes=codes))
     patient.state_enc = crypto.encrypt_json(dek, result.state, patient_id=patient.id, field="state")
-    when = datetime.fromtimestamp(pkt.ts, timezone.utc)
+    when = datetime.fromtimestamp(pkt.ts, UTC)
     if patient.last_reading_at is None or _aware(patient.last_reading_at) <= when:
         patient.last_band, patient.last_score, patient.last_reading_at = result.band, result.risk, when
     device.last_seen = when
-    _upsert_alerts(db, patient.id, result.reasons, when)
+    rollups.add(db, patient_id=patient.id, dek=dek, ts=pkt.ts, values={**vitals, "risk": result.risk}, band=result.band)
+    upsert_alerts(db, patient.id, result.reasons, when)
     db.commit()
     del plaintext, vitals, payload, dek  # drop plaintext references promptly
     return {"accepted": True, "band": result.band, "reasons": codes.split(",") if codes else []}
 
 
 def _aware(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def _upsert_alerts(db: Session, patient_id: int, reasons: list[tuple[str, str]], when: datetime) -> None:
-    """One open alert per patient per reason code; repeated hits update it instead of spamming."""
+def upsert_alerts(db: Session, patient_id: int, reasons: list[tuple[str, str]], when: datetime) -> None:
+    """One open alert per patient per reason code; repeated hits update it instead of spamming.
+
+    A partial unique index guarantees the "one open alert" rule even when two readings for the
+    same patient are processed at the same time; the loser of the race updates the winner's row.
+    """
     for code, severity in reasons:
-        existing = db.execute(
-            select(Alert).where(Alert.patient_id == patient_id, Alert.reason_code == code, Alert.status == "open")
-        ).scalar_one_or_none()
-        if existing:
-            existing.occurrences += 1
-            existing.last_seen = when
-            if severity == "critical":
-                existing.severity = "critical"
-        else:
-            db.add(Alert(patient_id=patient_id, reason_code=code, severity=severity,
-                         first_seen=when, last_seen=when))
+        for _ in range(3):
+            existing = db.execute(
+                select(Alert).where(Alert.patient_id == patient_id, Alert.reason_code == code, Alert.status == "open")
+            ).scalar_one_or_none()
+            if existing:
+                existing.occurrences += 1
+                existing.last_seen = max(_aware(existing.last_seen), when)
+                if severity == "critical":
+                    existing.severity = "critical"
+                break
+            try:
+                with db.begin_nested():
+                    db.add(Alert(patient_id=patient_id, reason_code=code, severity=severity,
+                                 first_seen=when, last_seen=when))
+                break
+            except IntegrityError:
+                continue

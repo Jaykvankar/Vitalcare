@@ -7,26 +7,29 @@ Credentials (passwords + TOTP secrets) are written to seed_credentials.txt (giti
 """
 from __future__ import annotations
 
+import os
 import secrets
 import string
 import sys
 import time
+from pathlib import Path
 
 from sqlalchemy import select
 
 from . import services
 from .config import PROJECT_DIR, get_settings
 from .db import SessionLocal, create_schema, init_engine
-from .models import Assignment, User
 from .ml import realdata
+from .ml.synth import PatientStream
+from .models import Assignment, User
 from .readings import ingest
 from .security import audit, auth, server_keys
 from .simulator import build_packet, runner, stream_for
 
-HISTORY_HOURS = 24
+HISTORY_HOURS = int(os.environ.get("RPM_SEED_HISTORY_HOURS", "24"))
 HISTORY_STEP_S = 600  # one historical reading every 10 minutes
 
-PEOPLE = [
+PEOPLE: list[tuple[str, str, str, dict[str, str]]] = [
     ("admin", "Asha Admin", "admin", {}),
     ("dr.mehta", "Dr. Kiran Mehta", "clinician", {}),
     ("dr.rao", "Dr. Priya Rao", "clinician", {}),
@@ -70,23 +73,28 @@ def main() -> None:
     keys = server_keys.load_or_create()
 
     creds = []
+    recovery: dict[str, list[str]] = {}
     users: dict[str, User] = {}
     for username, name, role, pii in PEOPLE:
         pw = strong_password()
-        u = services.create_user(db, username=username, full_name=name, role=role, password=pw, **pii)
+        u = services.create_user(db, username=username, full_name=name, role=role, password=pw,
+                                 dob=pii.get("dob"), phone=pii.get("phone"), address=pii.get("address"))
         totp_secret = ""
         if role in auth.MFA_ROLES:
             totp_secret = auth.new_totp_secret()
             auth.store_totp_secret(u, totp_secret)
             u.totp_confirmed = True
             db.commit()
+            recovery[username] = auth.issue_recovery_codes(db, u)
         users[username] = u
         creds.append((username, role, pw, totp_secret))
         audit.append("user_created", actor="seed", target=f"user:{u.id}", detail=f"role={role}")
 
     for clin, pats in ASSIGN.items():
         for p in pats:
-            db.add(Assignment(clinician_id=users[clin].id, patient_id=users[p].patient.id))
+            patient = users[p].patient
+            assert patient is not None
+            db.add(Assignment(clinician_id=users[clin].id, patient_id=patient.id))
     db.commit()
 
     now = int(time.time())
@@ -95,16 +103,16 @@ def main() -> None:
         if u.role != "patient":
             continue
         source = "synthetic"
+        assert u.patient is not None
         if username == REAL_PATIENT and realdata.available()["mimic"]:
             source = f"mimic:{pick_mimic_stay()}"
         dev = services.provision_simulated_device(db, u.patient.id, "Wearable monitor",
                                                   created_by=users["admin"].id, source=source)
         priv = runner.keystore.private_key(dev.id)
         stream = stream_for(dev.id, source)
-        if source == "synthetic":
+        starts: dict[int, str] = {}
+        if isinstance(stream, PatientStream):
             stream.episode_rate = stream.activity_rate = 0.0
-        else:
-            starts = {}
         if source == "synthetic":
             starts = {now - h * 3600: kind for h, kind in HISTORY_EPISODES.get(username, [])}
         t0 = now - HISTORY_HOURS * 3600
@@ -125,12 +133,14 @@ def main() -> None:
     db.close()
     audit.checkpoint_now()
 
-    out = PROJECT_DIR / "seed_credentials.txt"
+    out = Path(os.environ.get("RPM_SEED_CREDENTIALS", PROJECT_DIR / "seed_credentials.txt"))
     lines = ["# Demo credentials (gitignored). TOTP uses SHA-512, 6 digits, 30 s.",
              "# Add the secret to Aegis / 2FAS / FreeOTP with algorithm SHA512, or run:",
              "#   .venv\\Scripts\\python scripts\\totp_code.py <username>", ""]
     for username, role, pw, totp_secret in creds:
         lines.append(f"{username:10} {role:9} password={pw}" + (f"  totp_secret={totp_secret}" if totp_secret else ""))
+        if username in recovery:
+            lines.append(f"{'':10} recovery codes: {' '.join(recovery[username])}")
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Seeded {len(PEOPLE)} users. Database: {db_path}. Credentials written to {out}")
 

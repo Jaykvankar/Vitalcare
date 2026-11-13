@@ -1,0 +1,38 @@
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "SIM", "RUF"]
+ignore = [
+  "S101",   # assert is fine in tests
+  "S311",   # random.Random is used for synthetic data, not for security
+  "S608",   # SQL is built only from fixed identifiers in the migration helper
+  "B008",   # FastAPI Depends() in defaults is the framework's idiom
+  "RUF001", "RUF002", "RUF003",  # unicode symbols in UI strings/docs are intentional
+  "UP007",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S108", "BLE001", "B017"]
+"app/ml/*" = ["S301", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+exclude = ["migrations/", "tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/ml/train.py", "app/ml/eval_real.py"]

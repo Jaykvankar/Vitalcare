@@ -10,6 +10,7 @@ export default function Worklist() {
   const counts = { critical: 0, warning: 0, normal: 0 };
   data?.forEach((p) => p.band && (counts[p.band] += 1));
   const openAlerts = data?.reduce((n, p) => n + p.open_alerts, 0) ?? 0;
+  const escalated = data?.reduce((n, p) => n + p.escalated_alerts, 0) ?? 0;
 
   return (
     <div className="page">
@@ -28,6 +29,11 @@ export default function Worklist() {
         <div className="card stat"><div className="label"><Icon.Inbox size={15} /> Open alerts</div><div className="num">{openAlerts}</div></div>
       </div>
 
+      {escalated > 0 && (
+        <div className="notice error" role="alert"><Icon.Alert size={18} />
+          <div><b>{escalated} critical alert{escalated === 1 ? " has" : "s have"} been waiting more than 15 minutes.</b> Open the highlighted patients and acknowledge or act.</div>
+        </div>
+      )}
       {error && <div className="notice error">{error.message}</div>}
       <div className="card scroll-x">
         <table className="table">
@@ -61,7 +67,7 @@ export default function Worklist() {
                       </div>
                     )}
                   </td>
-                  <td className="num">{p.open_alerts || <span className="muted">–</span>}</td>
+                  <td className="num">{p.open_alerts || <span className="muted">–</span>}{p.escalated_alerts > 0 && <span className="tag danger" style={{ marginLeft: 6 }}>Escalated</span>}</td>
                   <td className="muted">{timeAgo(p.last_reading_at)}</td>
                   <td title={sourceInfo(p.data_source).detail}><SourceChip source={p.data_source} /></td>
                 </tr>

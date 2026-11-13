@@ -126,7 +126,7 @@ def test_mfa_required_for_clinician(world):
 def test_lockout_after_repeated_failures(world):
     from app.security import auth
 
-    auth.login_limiter.hits.clear()
+    auth.login_limiter.reset()
     c = TestClient(world["app"], base_url="https://testserver")
     c.headers["X-RPM-Request"] = "1"
     for _ in range(5):
@@ -141,7 +141,7 @@ def test_lockout_after_repeated_failures(world):
     u.locked_until = None
     db.commit()
     db.close()
-    auth.login_limiter.hits.clear()
+    auth.login_limiter.reset()
 
 
 def test_csrf_header_and_origin_required(world):
@@ -154,9 +154,9 @@ def test_csrf_header_and_origin_required(world):
 
 
 def test_device_pairing_flow(world, client_for):
+    from app.security import signatures
     from app.security.hashing import b64e
     from app.security.pairing import proof
-    from app.security import signatures
 
     dev = TestClient(world["app"], base_url="https://testserver")
     # unassigned clinician cannot issue a code; assigned clinician can
@@ -185,9 +185,9 @@ def test_device_pairing_flow(world, client_for):
 
 
 def test_pairing_code_burns_after_five_wrong_proofs(world, client_for):
+    from app.security import signatures
     from app.security.hashing import b64e
     from app.security.pairing import proof
-    from app.security import signatures
 
     dev = TestClient(world["app"], base_url="https://testserver")
     r = client_for("admin").post("/api/devices/pairing-codes", json={"patient_id": world["ids"]["p2"]})
@@ -215,7 +215,7 @@ def test_audit_chain_detects_tampering(world, client_for):
         try:
             conn.execute(text("UPDATE audit_log SET detail='x' WHERE id=1"))
             raise AssertionError("update should have been blocked")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             assert "append-only" in str(exc)
     with engine().begin() as conn:
         # ... so an attacker with full DB access drops the trigger and edits a row.

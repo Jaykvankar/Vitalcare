@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,7 +22,7 @@ from .db import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -35,6 +36,10 @@ class User(Base):
     totp_secret_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     totp_key_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     totp_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Last TOTP time-step accepted (replay guard, shared by all server processes)
+    totp_last_step: Mapped[int] = mapped_column(BigInteger, default=0)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -73,6 +78,8 @@ class Patient(Base):
     last_band: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reading_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Crypto-shredding: when set, the wrapped DEK has been destroyed and all ciphertext is unreadable
+    erased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="patient")
 
@@ -91,7 +98,7 @@ class Device(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     label: Mapped[str] = mapped_column(String(64))
-    # The server stores the device's RSA *public* key only
+    kind: Mapped[str] = mapped_column(String(16), default="device")  # device | import (historical upload batch)
     public_key_pem: Mapped[str] = mapped_column(Text)
     last_seq: Mapped[int] = mapped_column(BigInteger, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -135,8 +142,27 @@ class Reading(Base):
     reason_codes: Mapped[str] = mapped_column(String(256), default="")
 
 
+class ReadingRollup(Base):
+    """5-minute aggregate of a patient's readings, AES-256-GCM encrypted under the patient DEK.
+
+    Lets 24 h / 7 d charts decrypt a few hundred rollups instead of every raw reading.
+    """
+    __tablename__ = "reading_rollups"
+    __table_args__ = (UniqueConstraint("patient_id", "bucket_ts"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    bucket_ts: Mapped[int] = mapped_column(BigInteger)
+    blob: Mapped[bytes] = mapped_column(LargeBinary)
+    worst_band: Mapped[str] = mapped_column(String(16))
+
+
 class Alert(Base):
     __tablename__ = "alerts"
+    # At most one OPEN alert per patient and reason code, enforced by the database.
+    __table_args__ = (
+        Index("uq_alert_open", "patient_id", "reason_code", unique=True,
+              sqlite_where=text("status = 'open'"), postgresql_where=text("status = 'open'")),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     reason_code: Mapped[str] = mapped_column(String(32))
@@ -148,6 +174,7 @@ class Alert(Base):
     acknowledged_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ack_note_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditLog(Base):
@@ -159,14 +186,44 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(48))
     target: Mapped[str] = mapped_column(String(64), default="")
     detail: Mapped[str] = mapped_column(Text, default="")
-    prev_hash: Mapped[str] = mapped_column(String(128))
+    # Unique: two writers can never both append after the same row, so the chain cannot fork.
+    prev_hash: Mapped[str] = mapped_column(String(128), unique=True)
     hash: Mapped[str] = mapped_column(String(128))
 
 
 class AuditCheckpoint(Base):
     __tablename__ = "audit_checkpoints"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    last_audit_id: Mapped[int] = mapped_column(Integer)
+    last_audit_id: Mapped[int] = mapped_column(Integer, unique=True)
     head_hash: Mapped[str] = mapped_column(String(128))
     signature: Mapped[bytes] = mapped_column(LargeBinary)  # ECDSA P-384 / SHA-512
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RecoveryCode(Base):
+    """One-time MFA recovery codes, stored only as PBKDF2-HMAC-SHA-512 hashes."""
+    __tablename__ = "recovery_codes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(256))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RateLimit(Base):
+    """Fixed-window request counters shared by all server processes."""
+    __tablename__ = "rate_limits"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    window_start: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ImportBatch(Base):
+    """Record of a bulk import (people or historical vitals)."""
+    __tablename__ = "import_batches"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))  # people | vitals
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    rows: Mapped[int] = mapped_column(Integer)
+    sha512: Mapped[str] = mapped_column(String(128))  # digest of the uploaded file
+    patient_id: Mapped[int | None] = mapped_column(ForeignKey("patients.id"), nullable=True)

@@ -16,14 +16,14 @@ import secrets
 import time
 from pathlib import Path
 
-import _path  # noqa: F401
+import _path
 
 os.environ.setdefault("RPM_MASTER_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")  # unused by the client
-import httpx  # noqa: E402
+import httpx
 
-from app.security import aead, signatures  # noqa: E402
-from app.security.hashing import b64d, b64e, canonical  # noqa: E402
-from app.simulator import build_packet, pairing_request, stream_for  # noqa: E402
+from app.security import aead, signatures
+from app.security.hashing import b64d, b64e, canonical
+from app.simulator import build_packet, pairing_request, stream_for
 
 STATE = Path("device_state.json")
 
@@ -44,10 +44,11 @@ def save(state: dict, passphrase: str) -> None:
 
 def load(passphrase: str) -> dict:
     doc = json.loads(STATE.read_text())
-    return json.loads(aead.open_blob(_key(passphrase, b64d(doc["salt"])), b64d(doc["blob"]), canonical("device-state", doc["salt"])))
+    key = _key(passphrase, b64d(doc["salt"]))
+    return json.loads(aead.open_blob(key, b64d(doc["blob"]), canonical("device-state", doc["salt"])))
 
 
-def verify_arg(server: str, cert: str | None):  # noqa: ANN201
+def verify_arg(server: str, cert: str | None):
     if server.startswith("http://"):
         return False
     return cert or str(_path.ROOT / "certs" / "dev-cert.pem")

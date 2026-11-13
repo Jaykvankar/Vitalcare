@@ -19,12 +19,12 @@ if __name__ == "__main__":
         port = int(os.environ.get("RPM_PORT", "8000"))
         os.environ.update({"RPM_SECURE_COOKIES": "false", "RPM_SELF_URL": f"http://localhost:{port}",
                            "RPM_ALLOWED_ORIGINS": f"http://localhost:{port},http://127.0.0.1:{port}"})
-        uvicorn.run("app.main:app", host="127.0.0.1", port=port, workers=1, server_header=False)
+        uvicorn.run("app.main:app", host="127.0.0.1", port=port, workers=1, server_header=False, access_log=False)
         raise SystemExit(0)
     cert, key = ROOT / "certs" / "dev-cert.pem", ROOT / "certs" / "dev-key.pem"
     if not cert.exists():
         raise SystemExit("No TLS certificate. Run: python scripts/gen_dev_cert.py")
     uvicorn.run(
         "app.main:app", host=os.environ.get("RPM_HOST", "127.0.0.1"), port=int(os.environ.get("RPM_PORT", "8443")),
-        ssl_certfile=str(cert), ssl_keyfile=str(key), workers=1, proxy_headers=False, server_header=False,
+        ssl_certfile=str(cert), ssl_keyfile=str(key), workers=1, proxy_headers=False, server_header=False, access_log=False,
     )

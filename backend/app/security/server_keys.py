@@ -11,6 +11,8 @@ import json
 import threading
 from dataclasses import dataclass
 
+from cryptography.hazmat.primitives.asymmetric import dh, ec
+
 from ..config import get_settings
 from . import sealing, signatures
 from .crypto import decrypt_with_master, encrypt_with_master
@@ -19,15 +21,15 @@ from .hashing import b64d, b64e
 
 @dataclass
 class ServerKeys:
-    dh_private: object
-    ecdsa_private: object
+    dh_private: dh.DHPrivateKey
+    ecdsa_private: ec.EllipticCurvePrivateKey
 
     @property
     def dh_public_raw(self) -> bytes:
         return sealing.public_bytes(self.dh_private.public_key())
 
     @property
-    def ecdsa_public(self):  # noqa: ANN201
+    def ecdsa_public(self) -> ec.EllipticCurvePublicKey:
         return self.ecdsa_private.public_key()
 
 
@@ -35,7 +37,7 @@ _lock = threading.Lock()
 _cached: ServerKeys | None = None
 
 
-def _path():  # noqa: ANN202
+def _path():
     return get_settings().data_dir / "server_keys.json"
 
 

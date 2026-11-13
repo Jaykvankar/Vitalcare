@@ -37,6 +37,17 @@ export interface Me {
   full_name: string;
   role: Role;
   patient_id: number | null;
+  must_change_password: boolean;
+  recovery_codes_left: number | null;
+}
+
+/** Download a JSON or text payload as a file without it touching the server again. */
+export function saveFile(name: string, content: string, type = "application/json") {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 export interface Point {
@@ -71,6 +82,7 @@ export interface AlertItem {
   occurrences: number;
   acknowledged_by: string | null;
   acknowledged_at: string | null;
+  escalated_at: string | null;
   note: string | null;
 }
 
@@ -81,6 +93,7 @@ export interface PatientSummary {
   risk: number | null;
   last_reading_at: string | null;
   open_alerts: number;
+  escalated_alerts: number;
   consent_active: boolean;
   data_source: string;
 }

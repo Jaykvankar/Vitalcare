@@ -1,10 +1,13 @@
 """Admin endpoints. Admins manage accounts, devices and assignments but can never decrypt clinical data."""
 from __future__ import annotations
 
+import secrets
+from datetime import UTC, datetime
+
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,7 +16,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..ml import realdata
 from ..ml.synth import EPISODES
-from ..models import Assignment, AuditLog, Device, Patient, User
+from ..models import Assignment, AuditLog, Device, PairingCode, Patient, Session_, User
 from ..security import audit, auth, server_keys
 from ..security.hashing import sha512_hex
 from ..security.sealing import public_bytes
@@ -47,7 +50,8 @@ def list_users(_: User = Depends(admin_only), db: Session = Depends(get_db)) -> 
 def create_user(body: UserIn, admin: User = Depends(admin_only), db: Session = Depends(get_db)) -> dict:
     try:
         user = services.create_user(db, username=body.username, full_name=body.full_name, role=body.role,
-                                    password=body.password, dob=body.dob, phone=body.phone, address=body.address)
+                                    password=body.password, dob=body.dob, phone=body.phone, address=body.address,
+                                    must_change_password=True)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, "Username already exists") from exc
@@ -91,7 +95,10 @@ def reset_mfa(user_id: int, admin: User = Depends(admin_only), db: Session = Dep
 def list_patients(_: User = Depends(admin_only), db: Session = Depends(get_db)) -> list[dict]:
     out = []
     for p in db.execute(select(Patient)).scalars():
-        devices = db.execute(select(Device).where(Device.patient_id == p.id, Device.active.is_(True))).scalars().all()
+        devices = db.execute(select(Device).where(Device.patient_id == p.id, Device.active.is_(True),
+                                                  Device.kind == "device")).scalars().all()
+        if p.erased_at is not None:
+            continue
         out.append({"id": p.id, "name": p.user.full_name, "username": p.user.username,
                     "consent_active": p.consent_active, "key_version": p.key_version,
                     "devices": [{"id": d.id, "label": d.label} for d in devices],
@@ -112,6 +119,8 @@ def list_assignments(_: User = Depends(admin_only), db: Session = Depends(get_db
     out = []
     for a in rows:
         c, p = db.get(User, a.clinician_id), db.get(Patient, a.patient_id)
+        if c is None or p is None:
+            continue
         out.append({"id": a.id, "clinician_id": c.id, "clinician": c.full_name,
                     "patient_id": p.id, "patient": p.user.full_name})
     return out
@@ -253,7 +262,8 @@ def simulator_pair(body: SimPairIn, admin: User = Depends(admin_only)) -> dict:
 @router.get("/keys")
 def key_status(_: User = Depends(admin_only), db: Session = Depends(get_db)) -> dict:
     keys = server_keys.load_or_create()
-    by_version = dict(db.execute(select(Patient.key_version, func.count()).group_by(Patient.key_version)).all())
+    by_version: dict[int, int] = {v: n for v, n in db.execute(
+        select(Patient.key_version, func.count()).group_by(Patient.key_version)).all()}
     return {
         "master_key_version": get_settings().master_key_version,
         "patients_by_key_version": {str(k): v for k, v in by_version.items()},
@@ -270,3 +280,41 @@ def key_status(_: User = Depends(admin_only), db: Session = Depends(get_db)) -> 
             "mfa": "TOTP with HMAC-SHA-512",
         },
     }
+
+
+class EraseIn(BaseModel):
+    confirm_username: str = Field(max_length=64)
+
+
+@router.post("/patients/{patient_id}/erase")
+def erase_patient(patient_id: int, body: EraseIn, admin: User = Depends(admin_only),
+                  db: Session = Depends(get_db)) -> dict:
+    """Right to erasure by crypto-shredding: destroy the patient's wrapped AES key.
+
+    Every reading, rollup, note and personal field was encrypted under that key, so all of it becomes
+    permanently unreadable at once, without rewriting any ciphertext. The account is disabled,
+    devices revoked and care-team links removed. Irreversible.
+    """
+    p = db.get(Patient, patient_id)
+    if p is None or p.erased_at is not None:
+        raise HTTPException(404, "Patient not found")
+    if body.confirm_username.strip().lower() != p.user.username:
+        raise HTTPException(400, "Type the patient's username to confirm erasure")
+    now = datetime.now(UTC)
+    p.wrapped_dek = secrets.token_bytes(len(p.wrapped_dek) or 60)  # overwrite: the real DEK is gone for good
+    p.erased_at = now
+    p.consent_active = False
+    p.dob_enc = p.phone_enc = p.address_enc = p.state_enc = None
+    p.last_band = p.last_score = None
+    p.user.active = False
+    p.user.full_name = f"Erased patient {p.id}"
+    for d in db.execute(select(Device).where(Device.patient_id == p.id)).scalars():
+        d.active, d.revoked_at = False, d.revoked_at or now
+    db.execute(delete(Assignment).where(Assignment.patient_id == p.id))
+    db.execute(delete(PairingCode).where(PairingCode.patient_id == p.id))
+    db.execute(update(Session_).where(Session_.user_id == p.user_id).values(revoked=True))
+    db.commit()
+    runner.set_enabled(p.id, False)
+    audit.append("patient_erased", actor_id=admin.id, actor=admin.username, target=f"patient:{p.id}",
+                 detail="crypto-shredded: patient key destroyed")
+    return {"ok": True, "erased_at": now.isoformat()}

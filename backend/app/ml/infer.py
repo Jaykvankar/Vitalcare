@@ -24,7 +24,7 @@ _model = None
 _lock = threading.Lock()
 
 
-def load_model():  # noqa: ANN201
+def load_model():
     """Load model.joblib only if its SHA-512 matches the pinned value (unpickling runs code)."""
     global _model
     with _lock:

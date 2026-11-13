@@ -1,12 +1,15 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PatientProfile } from "../api";
 import { Icon } from "../components/Icons";
 import { DevicesCard, Monitor, PatientHeader } from "../components/Monitor";
 import { usePolling } from "../hooks";
+import { ImportHistoryModal } from "../components/ImportHistory";
 
 export default function PatientDetail() {
   const id = Number(useParams().id);
   const { data: p, error } = usePolling<PatientProfile>(`/api/patients/${id}`, 15000);
+  const [importing, setImporting] = useState(false);
 
   if (error) return <div className="page"><div className="notice error">{error.message}</div></div>;
   return (
@@ -17,7 +20,9 @@ export default function PatientDetail() {
           <h1 style={{ marginTop: 10 }}>Patient record</h1>
           <p className="sub">Decrypted for you because you are on this patient's care team. This view is recorded in the privacy ledger.</p>
         </div>
+        {p?.consent_active && <button className="btn secondary" onClick={() => setImporting(true)}><Icon.Database size={16} /> Import past readings</button>}
       </div>
+      {importing && p && <ImportHistoryModal patientId={id} patientName={p.name} onClose={() => setImporting(false)} />}
       {p && <PatientHeader p={p} />}
       {p && !p.consent_active ? (
         <div className="card pad">

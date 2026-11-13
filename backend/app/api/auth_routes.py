@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import User
+from ..models import Session_, User
 from ..security import audit, auth
 from ..security.hashing import burn_password_time, verify_password
 
@@ -18,12 +18,19 @@ class LoginIn(BaseModel):
 
 
 class MfaIn(BaseModel):
-    code: str = Field(min_length=6, max_length=6)
+    code: str = Field(min_length=6, max_length=16)  # 6-digit TOTP or XXXXX-XXXXX recovery code
 
 
-def user_out(u: User) -> dict:
+class PasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+def user_out(db: Session, u: User) -> dict:
     return {"id": u.id, "username": u.username, "full_name": u.full_name, "role": u.role,
-            "patient_id": u.patient.id if u.patient else None}
+            "patient_id": u.patient.id if u.patient else None,
+            "must_change_password": u.must_change_password,
+            "recovery_codes_left": auth.recovery_codes_left(db, u) if u.role in auth.MFA_ROLES else None}
 
 
 @router.post("/login")
@@ -49,7 +56,7 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
     auth.create_session(db, user, response, mfa_ok=not needs_mfa)
     if not needs_mfa:
         audit.append("login", actor_id=user.id, actor=user.username, detail=f"ip={ip}")
-        return {"mfa": "none", "user": user_out(user)}
+        return {"mfa": "none", "user": user_out(db, user)}
     if user.totp_confirmed:
         return {"mfa": "verify"}
     # First login for an MFA role: enrol an authenticator.
@@ -63,18 +70,52 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
 def mfa(body: MfaIn, request: Request, db: Session = Depends(get_db)) -> dict:
     user, sess = auth.pending_user(request, db)
     auth.mfa_limiter.check(f"{user.id}")
-    if not auth.verify_totp(user, body.code):
+    code = body.code.strip()
+    method = "totp"
+    ok = auth.verify_totp(db, user, code)
+    if not ok and user.totp_confirmed and not code.isdigit():
+        ok = auth.use_recovery_code(db, user, code)
+        method = "recovery_code"
+    if not ok:
         auth.register_failure(db, user)
         audit.append("mfa_failed", actor_id=user.id, actor=user.username)
         raise HTTPException(401, "Invalid code")
+    recovery_codes = None
     if not user.totp_confirmed:
         user.totp_confirmed = True
+        recovery_codes = auth.issue_recovery_codes(db, user)
         audit.append("mfa_enrolled", actor_id=user.id, actor=user.username)
     sess.mfa_ok = True
     auth.register_success(db, user)
     db.commit()
-    audit.append("login", actor_id=user.id, actor=user.username, detail=f"ip={auth.client_ip(request)} mfa=totp")
-    return {"user": user_out(user)}
+    audit.append("login", actor_id=user.id, actor=user.username,
+                 detail=f"ip={auth.client_ip(request)} mfa={method}")
+    return {"user": user_out(db, user), "recovery_codes": recovery_codes}
+
+
+@router.post("/password")
+def change_password(body: PasswordIn, pair: tuple[User, Session_] = Depends(auth.authenticated),
+                    db: Session = Depends(get_db)) -> dict:
+    user, sess = pair
+    if not verify_password(body.current_password, user.password_hash):
+        auth.register_failure(db, user)
+        raise HTTPException(401, "Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(422, "New password must be different")
+    auth.check_password_policy(user, body.new_password)
+    auth.set_password(user, body.new_password)
+    db.commit()
+    auth.revoke_other_sessions(db, user, keep=sess)
+    audit.append("password_changed", actor_id=user.id, actor=user.username)
+    return {"user": user_out(db, user)}
+
+
+@router.post("/recovery-codes")
+def regenerate_recovery_codes(user: User = Depends(auth.require_role("admin", "clinician")),
+                              db: Session = Depends(get_db)) -> dict:
+    codes = auth.issue_recovery_codes(db, user)
+    audit.append("recovery_codes_regenerated", actor_id=user.id, actor=user.username)
+    return {"recovery_codes": codes}
 
 
 @router.post("/logout")
@@ -84,5 +125,5 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)) 
 
 
 @router.get("/me")
-def me(user: User = Depends(auth.current_user)) -> dict:
-    return user_out(user)
+def me(pair: tuple[User, Session_] = Depends(auth.authenticated), db: Session = Depends(get_db)) -> dict:
+    return user_out(db, pair[0])

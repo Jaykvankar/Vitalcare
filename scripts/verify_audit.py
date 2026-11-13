@@ -5,6 +5,7 @@
 import json
 
 import _path  # noqa: F401
+
 from app.config import get_settings
 from app.db import init_engine
 from app.security import audit

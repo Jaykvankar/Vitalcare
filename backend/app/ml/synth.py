@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from .rules import VITALS
 
-EPISODES = {
+EPISODES: dict[str, dict[str, tuple[float, float]]] = {
     # vital: (min shift, max shift) at full severity
     "hypoxia": {"spo2": (-12, -6), "rr": (6, 10), "hr": (15, 25)},
     "tachycardia": {"hr": (38, 60), "rr": (2, 5)},

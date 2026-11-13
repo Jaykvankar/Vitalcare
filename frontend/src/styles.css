@@ -397,6 +397,16 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 0.82re
 .pair-code { font-family: var(--mono); font-size: 1.9rem; letter-spacing: 0.12em; font-weight: 600; text-align: center; padding: 18px; border-radius: 10px; background: var(--surface-3); border: 1px dashed var(--border-strong); user-select: all; }
 .steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); font-size: 0.86rem; }
 
+/* uploads + recovery codes */
+.dropzone { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 20px; border: 1.5px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--muted); }
+.dropzone b { color: var(--ink); }
+.dropzone > div:nth-child(2) { flex: 1; min-width: 200px; }
+.dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
+.code-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.code-grid code { padding: 8px 10px; background: var(--surface-3); border-radius: 6px; text-align: center; letter-spacing: 0.08em; font-size: 0.92rem; }
+.modal.wide { max-width: 640px; }
+.side-user:hover { background: var(--side-bg-2); border-radius: 8px; }
+
 /* login */
 .login { display: grid; grid-template-columns: 1.05fr 1fr; min-height: 100vh; }
 .login-art { background: var(--side-bg); color: var(--side-ink); padding: 40px 48px; display: flex; flex-direction: column; position: relative; overflow: hidden; }

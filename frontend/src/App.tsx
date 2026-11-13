@@ -1,13 +1,17 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, Me } from "./api";
 import { Icon, initials } from "./components/Icons";
 import { Theme, useTheme } from "./theme";
 import Login from "./pages/Login";
-import PatientHome from "./pages/PatientHome";
-import Worklist from "./pages/Worklist";
-import PatientDetail from "./pages/PatientDetail";
-import Admin from "./pages/Admin";
+import { ForcedPasswordChange } from "./pages/Account";
+
+// Each area loads on demand so a patient never downloads the admin or clinician code.
+const PatientHome = lazy(() => import("./pages/PatientHome"));
+const Worklist = lazy(() => import("./pages/Worklist"));
+const PatientDetail = lazy(() => import("./pages/PatientDetail"));
+const Admin = lazy(() => import("./pages/Admin"));
+const Account = lazy(() => import("./pages/Account"));
 
 interface AuthCtx {
   me: Me | null;
@@ -37,15 +41,20 @@ export default function App() {
 
   return (
     <Ctx.Provider value={{ me, setMe, theme }}>
-      {me ? (
+      {me && me.must_change_password ? (
+        <ForcedPasswordChange />
+      ) : me ? (
         <Shell me={me} theme={theme} setTheme={setTheme}>
+          <Suspense fallback={<div className="muted">Loading…</div>}>
           <Routes>
             {me.role === "patient" && <Route path="/me" element={<PatientHome />} />}
             {me.role === "clinician" && <Route path="/worklist" element={<Worklist />} />}
             {me.role === "clinician" && <Route path="/patients/:id" element={<PatientDetail />} />}
             {me.role === "admin" && <Route path="/admin/*" element={<Admin />} />}
+            <Route path="/account" element={<Account />} />
             <Route path="*" element={<Navigate to={homeFor(me)} replace />} />
           </Routes>
+          </Suspense>
         </Shell>
       ) : (
         <Routes>
@@ -61,6 +70,7 @@ const NAV: Record<string, { to: string; label: string; icon: keyof typeof Icon }
   clinician: [{ to: "/worklist", label: "Patient worklist", icon: "Grid" }],
   admin: [
     { to: "/admin/users", label: "People", icon: "Users" },
+    { to: "/admin/import", label: "Bulk import", icon: "Database" },
     { to: "/admin/assignments", label: "Care teams", icon: "Link" },
     { to: "/admin/devices", label: "Devices & pairing", icon: "Watch" },
     { to: "/admin/simulator", label: "Data sources", icon: "Play" },
@@ -72,7 +82,7 @@ const NAV: Record<string, { to: string; label: string; icon: keyof typeof Icon }
 const CRUMB: Record<string, string> = {
   "/me": "My health", "/worklist": "Patient worklist", "/admin/users": "People", "/admin/assignments": "Care teams",
   "/admin/devices": "Devices & pairing", "/admin/simulator": "Data sources", "/admin/audit": "Privacy ledger",
-  "/admin/security": "Keys & algorithms",
+  "/admin/security": "Keys & algorithms", "/admin/import": "Bulk import", "/account": "Sign-in & security",
 };
 
 function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setTheme: (t: Theme) => void; children: React.ReactNode }) {
@@ -123,13 +133,13 @@ function Shell({ me, theme, setTheme, children }: { me: Me; theme: Theme; setThe
               </button>
             ))}
           </div>
-          <div className="side-user">
+          <NavLink to="/account" className="side-user" style={{ textDecoration: "none", color: "inherit" }}>
             <span className="avatar">{initials(me.full_name)}</span>
             <div className="who">
               <b>{me.full_name}</b>
-              <span>{me.role}</span>
+              <span>{me.role} · account</span>
             </div>
-          </div>
+          </NavLink>
           <button className="signout" onClick={logout}>
             <Icon.Logout size={16} /> Sign out
           </button>

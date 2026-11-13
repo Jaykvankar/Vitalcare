@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from ..config import get_settings
 from ..db import SessionLocal
@@ -29,7 +30,7 @@ DEDUPE_SECONDS = 60
 DEDUPED_ACTIONS = {"decrypt_readings", "decrypt_profile"}
 
 
-def row_hash(prev_hash: str, ts: str, actor_id, actor: str, action: str, target: str, detail: str) -> str:  # noqa: ANN001
+def row_hash(prev_hash: str, ts: str, actor_id, actor: str, action: str, target: str, detail: str) -> str:
     return sha512_hex(canonical(prev_hash, ts, "" if actor_id is None else actor_id, actor, action, target, detail))
 
 
@@ -46,32 +47,43 @@ def append(action: str, *, actor_id: int | None = None, actor: str = "system",
             return
         _recent[key] = now
 
+    # The in-process lock avoids pointless retries; the UNIQUE(prev_hash) constraint is what
+    # guarantees that two processes can never both append after the same row (no forked chain).
     with _lock:
-        db = SessionLocal()
-        try:
-            last = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one_or_none()
-            prev = last.hash if last else GENESIS
-            ts = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-            h = row_hash(prev, ts, actor_id, actor, action, target, detail)
-            entry = AuditLog(ts=ts, actor_id=actor_id, actor=actor, action=action,
-                             target=target, detail=detail, prev_hash=prev, hash=h)
-            db.add(entry)
-            db.commit()
-            last_cp = db.execute(
-                select(AuditCheckpoint).order_by(AuditCheckpoint.id.desc()).limit(1)
-            ).scalar_one_or_none()
-            since = entry.id - (last_cp.last_audit_id if last_cp else 0)
-            if since >= get_settings().audit_checkpoint_every:
-                _checkpoint(db, entry.id, h)
-        finally:
-            db.close()
+        for attempt in range(20):
+            db = SessionLocal()
+            try:
+                last = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one_or_none()
+                prev = last.hash if last else GENESIS
+                ts = datetime.now(UTC).isoformat(timespec="microseconds")
+                h = row_hash(prev, ts, actor_id, actor, action, target, detail)
+                entry = AuditLog(ts=ts, actor_id=actor_id, actor=actor, action=action,
+                                 target=target, detail=detail, prev_hash=prev, hash=h)
+                db.add(entry)
+                db.commit()
+                last_cp = db.execute(
+                    select(AuditCheckpoint).order_by(AuditCheckpoint.id.desc()).limit(1)
+                ).scalar_one_or_none()
+                since = entry.id - (last_cp.last_audit_id if last_cp else 0)
+                if since >= get_settings().audit_checkpoint_every:
+                    _checkpoint(db, entry.id, h)
+                return
+            except IntegrityError:
+                db.rollback()  # another process appended first: re-read the head and try again
+                time.sleep(0.005 * (attempt + 1))
+            finally:
+                db.close()
+        raise RuntimeError("could not append to the audit ledger")
 
 
-def _checkpoint(db, last_id: int, head_hash: str) -> None:  # noqa: ANN001
+def _checkpoint(db, last_id: int, head_hash: str) -> None:
     keys = server_keys.load_or_create()
     sig = signatures.ecdsa_sign(keys.ecdsa_private, checkpoint_message(last_id, head_hash))
     db.add(AuditCheckpoint(last_audit_id=last_id, head_hash=head_hash, signature=sig))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()  # another process already signed this row
 
 
 def checkpoint_now() -> None:
@@ -92,7 +104,7 @@ def checkpoint_now() -> None:
             db.close()
 
 
-def verify(db=None) -> dict:  # noqa: ANN001
+def verify(db=None) -> dict:
     """Recompute the whole chain and check every checkpoint signature."""
     own = db is None
     db = db or SessionLocal()

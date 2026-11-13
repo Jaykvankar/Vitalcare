@@ -4,6 +4,8 @@ import { api, ApiError, sourceInfo } from "../api";
 import { usePolling } from "../hooks";
 import { Icon, initials } from "../components/Icons";
 import { DevicesCard, SourceChip } from "../components/Monitor";
+import { CsvPicker } from "../components/CsvUpload";
+import { saveFile } from "../api";
 
 interface UserRow { id: number; username: string; full_name: string; role: string; active: boolean; mfa_enrolled: boolean; patient_id: number | null }
 interface PatientRow { id: number; name: string; username: string; consent_active: boolean; key_version: number; devices: { id: string; label: string }[]; simulating: boolean; simulator_status: string | null; source: string | null }
@@ -30,6 +32,7 @@ export default function Admin() {
     <div className="page">
       <Routes>
         <Route path="users" element={<Users />} />
+        <Route path="import" element={<BulkImport />} />
         <Route path="assignments" element={<Assignments />} />
         <Route path="devices" element={<Devices />} />
         <Route path="simulator" element={<Simulator />} />
@@ -48,6 +51,7 @@ function Users() {
   const empty = { username: "", full_name: "", role: "patient", password: "", dob: "", phone: "", address: "" };
   const [f, setF] = useState(empty);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [erase, setErase] = useState<UserRow | null>(null);
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
@@ -84,6 +88,7 @@ function Users() {
                   <td className="actions">
                     {u.role !== "patient" && u.mfa_enrolled && <button className="btn ghost sm" onClick={() => act(`/api/admin/users/${u.id}/reset-mfa`)}>Reset two-step</button>}
                     {u.role !== "admin" && <button className="btn ghost sm" onClick={() => act(`/api/admin/users/${u.id}/active`, { active: !u.active })}>{u.active ? "Disable" : "Enable"}</button>}
+                    {u.role === "patient" && u.patient_id && u.active && <button className="btn danger sm" onClick={() => setErase(u)}>Erase</button>}
                   </td>
                 </tr>
               ))}
@@ -114,9 +119,170 @@ function Users() {
           <button className="btn primary">Add person</button>
         </form>
       </div>
+      {erase && <EraseModal user={erase} onClose={() => { setErase(null); reload(); }} />}
     </>
   );
 }
+
+function EraseModal({ user, onClose }: { user: UserRow; onClose: () => void }) {
+  const [typed, setTyped] = useState("");
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const go = async () => {
+    setErr("");
+    try {
+      await api(`/api/admin/patients/${user.patient_id}/erase`, { method: "POST", body: { confirm_username: typed } });
+      setDone(true);
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  };
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="erase-title" onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <div><h2 id="erase-title">Erase {user.full_name}</h2><div className="sub">Right to erasure · cannot be undone</div></div>
+          <button className="btn ghost sm" aria-label="Close" onClick={onClose}><Icon.X size={16} /></button>
+        </div>
+        <div className="card-body form">
+          {done ? (
+            <div className="notice success"><Icon.Check size={18} /> The patient's key was destroyed. Their readings, notes and personal details can no longer be decrypted by anyone.</div>
+          ) : (
+            <>
+              <p className="small">This destroys the patient's own AES-256 key (<b>crypto-shredding</b>). Every reading, rollup, note and personal detail was encrypted with it, so all of it becomes permanently unreadable at once. The account is disabled, devices are revoked and care-team links are removed.</p>
+              <div className="notice error"><Icon.Alert size={18} /><div>Copies in old database backups stay readable until those backups expire or the master key used for them is retired.</div></div>
+              <label className="field">Type <code>{user.username}</code> to confirm<input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" /></label>
+              {err && <div className="notice error">{err}</div>}
+              <button className="btn danger" disabled={typed !== user.username} onClick={go}>Erase permanently</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- bulk import */
+
+const PEOPLE_SAMPLE = [
+  "username,full_name,role,dob,phone,address,care_team",
+  "dr.sen,Dr. Arjun Sen,clinician,,,,",
+  "nurse.roy,Nisha Roy,clinician,,,,",
+  "p.verma,Kavita Verma,patient,1962-08-19,+91 98000 11111,22 Ring Road Delhi,dr.sen;nurse.roy",
+  "p.nair,Suresh Nair,patient,1955-01-07,+91 98000 22222,5 Beach Road Kochi,dr.sen",
+  "",
+].join("\n");
+
+interface PreviewRow { line: number; username: string; full_name: string; role: string; care_team: string[]; errors: string[] }
+interface Batch { id: string; kind: string; rows: number; by: string; patient: string | null; sha512: string; created_at: string }
+interface PeopleResult { committed: boolean; rows: PreviewRow[]; valid?: number; invalid?: number; created?: number; credentials_csv?: string }
+
+function BulkImport() {
+  const [text, setText] = useState("");
+  const [rows, setRows] = useState<PreviewRow[] | null>(null);
+  const [counts, setCounts] = useState<{ valid: number; invalid: number } | null>(null);
+  const [result, setResult] = useState<{ created: number; credentials_csv: string } | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { data: batches, reload } = usePolling<Batch[]>("/api/admin/import/batches", 30000);
+
+  const send = async (csv: string, commit: boolean) => {
+    setErr("");
+    setBusy(true);
+    try {
+      const r = await api<PeopleResult>("/api/admin/import/people", { method: "POST", body: { csv, commit } });
+      setRows(r.rows);
+      if (r.committed) {
+        setResult({ created: r.created!, credentials_csv: r.credentials_csv! });
+        setCounts(null);
+        reload();
+      } else setCounts({ valid: r.valid!, invalid: r.invalid! });
+    } catch (e) {
+      setErr((e as ApiError).message);
+      setRows(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Head eyebrow="Administration" title="Bulk import" sub="Onboard a hospital's staff and patients from one CSV file. Every row is checked first; nothing is created until the whole file is valid." />
+      {!result && (
+        <CsvPicker sample={PEOPLE_SAMPLE} sampleName="securerpm-people-template.csv" onText={(t) => { setText(t); send(t, false); }} />
+      )}
+      {err && <div className="notice error">{err}</div>}
+      {result && (
+        <div className="card pad form">
+          <div className="notice success"><Icon.Check size={18} /> Created {result.created} accounts. Everyone gets a temporary password and must choose their own at first sign-in. Staff set up two-step sign-in then.</div>
+          <div className="notice error"><Icon.Alert size={18} /><div>Download the temporary passwords now and hand them out securely. They are shown only once and are not stored anywhere.</div></div>
+          <div className="row">
+            <button className="btn primary" onClick={() => saveFile("securerpm-temporary-passwords.csv", result.credentials_csv, "text/csv")}>Download temporary passwords</button>
+            <button className="btn ghost" onClick={() => { setResult(null); setRows(null); setText(""); }}>Import another file</button>
+          </div>
+        </div>
+      )}
+      {rows && !result && counts && (
+        <div className="card">
+          <div className="card-head">
+            <div><h2>Preview</h2><div className="sub">{counts.valid} ready · {counts.invalid} with problems</div></div>
+            <button className="btn primary" disabled={busy || counts.invalid > 0} onClick={() => send(text, true)}>
+              {busy ? "Creating…" : counts.invalid > 0 ? "Fix the errors to continue" : `Create ${counts.valid} accounts`}
+            </button>
+          </div>
+          <div className="scroll-x" style={{ marginTop: 14 }}>
+            <table className="table compact">
+              <thead><tr><th>Line</th><th>Username</th><th>Name</th><th>Role</th><th>Care team</th><th>Check</th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.line}>
+                    <td className="faint">{r.line}</td>
+                    <td className="mono">{r.username}</td>
+                    <td>{r.full_name}</td>
+                    <td><span className="tag">{r.role}</span></td>
+                    <td className="small">{r.care_team.join(", ") || <span className="faint">–</span>}</td>
+                    <td>{r.errors.length ? <span className="crit-text small">{r.errors.join("; ")}</span> : <span className="tag ok">OK</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      <div className="grid two">
+        <div className="card pad">
+          <h2>File format</h2>
+          <ul className="steps" style={{ marginTop: 10 }}>
+            <li>Columns: <code>username, full_name, role, dob, phone, address, care_team</code></li>
+            <li><code>role</code> is patient, clinician or admin. <code>dob</code> is YYYY-MM-DD.</li>
+            <li><code>care_team</code> lists clinician usernames separated by <code>;</code> (they can be in the same file).</li>
+            <li>Up to 500 rows per file. Patient details are encrypted with each patient's own key.</li>
+            <li>Past vital signs are imported per patient by their clinician, from the patient record.</li>
+          </ul>
+        </div>
+        <div className="card scroll-x">
+          <div className="card-head"><div><h2>Recent imports</h2><div className="sub">File fingerprints are SHA-512 prefixes</div></div></div>
+          <table className="table compact" style={{ marginTop: 12 }}>
+            <thead><tr><th>When</th><th>Type</th><th className="num">Rows</th><th>By</th><th>File SHA-512</th></tr></thead>
+            <tbody>
+              {batches?.map((b) => (
+                <tr key={b.id}>
+                  <td className="small">{new Date(b.created_at).toLocaleString()}</td>
+                  <td>{b.kind}{b.patient && ` · ${b.patient}`}</td>
+                  <td className="num">{b.rows}</td>
+                  <td className="small">{b.by}</td>
+                  <td className="mono xs faint">{b.sha512}…</td>
+                </tr>
+              ))}
+              {batches && batches.length === 0 && <tr><td colSpan={5} className="empty">No imports yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 
 /* ---------------------------------------------------------------- care teams */
 

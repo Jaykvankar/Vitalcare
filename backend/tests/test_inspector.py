@@ -29,6 +29,8 @@ def test_inspector_shows_crypto_steps_but_never_vitals(world, client_for):
     for value in ("77.7", "96.6", "131.3", "81.1", "36.66", "15.5"):
         assert value not in text                     # no vital sign ever appears in the inspector
     assert "BEGIN" not in text and "PRIVATE" not in text   # no key material (PEM) either
+    for label in ('"normal"', '"warning"', '"critical"', "SPO2_LOW", "HR_HIGH"):
+        assert label not in text                     # nor the clinical result (band, reasons)
 
 
 def test_clinician_sees_only_assigned_devices_and_cannot_attack(world, client_for):

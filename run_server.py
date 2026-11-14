@@ -13,6 +13,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 os.chdir(ROOT / "backend")
 
 if __name__ == "__main__":
+    # Demo mode shows demo passwords and sign-in codes on the sign-in page: never on an address others can reach.
+    if os.environ.get("RPM_DEMO_MODE", "").lower() == "true" and \
+            os.environ.get("RPM_HOST", "127.0.0.1") not in ("127.0.0.1", "localhost", "::1"):
+        raise SystemExit("Demo mode only runs on this computer (RPM_HOST must be 127.0.0.1). "
+                         "Unset RPM_DEMO_MODE for a real installation.")
     if "--http" in sys.argv:
         # Localhost-only plain-HTTP mode for browsers that do not trust the self-signed cert.
         # Device payloads are still DH+AES sealed and RSA signed; only the outer TLS layer is off.

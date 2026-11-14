@@ -2,9 +2,9 @@
 
 Generated 2026-11-13 09:31 UTC by `backend/app/ml/eval_real.py`.
 
-**What this does and does not show.** The deterioration model is trained on *synthetic* episodes
-(see `model_report.md`), because no open dataset has bedside-labelled "deterioration started here" markers.
-This report runs the unchanged system on *real* recorded vital signs. It shows alert burden and whether the
+**What this does and does not show.** This report runs the rules, NEWS2 and the *synthetic-trained baseline*
+model on *real* recorded vital signs. The model the app now ships is trained on real eICU readings; its evaluation
+on hospitals it never saw and on MIMIC is in `model_report.md`. It shows alert burden and whether the
 scores separate patients with worse outcomes. It is not a clinical validation.
 
 ## MIMIC-III Clinical Database Demo (real ICU patients)
@@ -68,8 +68,8 @@ and the mean synthetic-model probability) from the training hospitals, and score
 | Max NEWS2 (no training) | 0.644 | 0.718 | 0.791 | 0.790 | 0.719 | **0.732 ± 0.055** |
 | Synthetic-trained model (no retraining) | 0.567 | 0.697 | 0.739 | 0.698 | 0.716 | **0.684 ± 0.060** |
 
-The real-data model is an evaluation experiment only; the live app still uses the rules, NEWS2 and the
-synthetic-trained model.
+This stay-level logistic regression is an evaluation experiment. The live app's model is now trained on real eICU
+readings by `train_real.py` (see `model_report.md`).
 
 ### By hospital characteristics (pooled first-24 h scores)
 | Region | Stays | Deaths | NEWS2 AUROC | Model AUROC |

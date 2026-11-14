@@ -42,6 +42,7 @@ describe("Login", () => {
       expect(passwordInput().value).toBe(password);
       expect(passwordInput().type).toBe("password");
       expect(screen.getByRole("button", { name: "Show password" })).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(password);   // filled in, never displayed
     }
     await waitFor(() => expect(document.activeElement).toBe(passwordInput()));
   });

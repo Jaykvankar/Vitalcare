@@ -9,10 +9,12 @@ import joblib
 import numpy as np
 
 from ..security.hashing import sha512_hex
+from . import model_hash
 from .features import features_and_update
 from .rules import evaluate_rules, news2
 
-ML_THRESHOLD = 0.6
+# The alert threshold is pinned next to the model's SHA-512 by whichever training script shipped the model.
+ML_THRESHOLD: float = float(getattr(model_hash, "MODEL_THRESHOLD", 0.6))
 ML_DIR = Path(__file__).resolve().parent
 
 

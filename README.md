@@ -46,7 +46,7 @@ Then one command does the rest:
 ```
 
 * With the real datasets downloaded (below), two demo patients replay **real eICU ICU stays from two different hospitals**, one replays a MIMIC-III stay, and one is synthetic, so you can inject a deterioration from Admin → **Data sources**.
-* Accounts and passwords are in `seed_credentials.txt`. In demo mode, **Try a role** fills the username and shows the password. Staff also need a 6-digit code, shown after the password step (**Use this code**), for the seeded accounts only. Outside the demo, or from a terminal:
+* Accounts and passwords are in `seed_credentials.txt`. In demo mode, **Try a role** fills the username and shows the password. Staff (dr.mehta, dr.rao, admin) also need a 6-digit code; get it in a second terminal and type it in:
 
 ```bash
 .venv\Scripts\python scripts\totp_code.py dr.mehta
@@ -64,8 +64,8 @@ Running pieces by hand instead: `scripts/init_env.py`, `scripts/gen_dev_cert.py`
 
 ## Real data (optional, about 100 MB, all open access)
 
-The live model is trained on synthetic episodes, because no open dataset marks *when* deterioration started.
-Real recordings are used two ways: to **evaluate** the system and to **replay** real patients through a simulated device.
+Real recordings are used three ways: to **train** the live model (eICU), to **evaluate** it (eICU hospitals it never
+saw, and MIMIC-III as a separate hospital system), and to **replay** real patients through a simulated device.
 
 Download into `data/real/` (git-ignored, no login needed):
 - **eICU Collaborative Research Database Demo** (ODbL): `patient.csv.gz`, `hospital.csv.gz`, `vitalPeriodic.csv.gz`, `vitalAperiodic.csv.gz` from `https://physionet.org/files/eicu-crd-demo/2.0.1/`, saved to `data/real/eicu/` (about 22 MB).
@@ -78,14 +78,24 @@ Then run, from `backend/` (about 3 minutes):
 ..\.venv\Scripts\python -m app.ml.eval_real
 ```
 
-This writes [docs/real_data_report.md](docs/real_data_report.md). Highlights:
-- **eICU, 2,032 stays from 184 hospitals, first 24 h → later in-hospital death (AUROC):**
-  - NEWS2: 0.734
-  - our synthetic-trained model: 0.687
-  - a model trained on real data from *other* hospitals: **0.760 ± 0.05** on hospitals it never saw
-- **Main next step:** retraining on real data and validating it at each new hospital.
-- **MIMIC-III, 100 stays:** the model 0.62 vs NEWS2 0.53. That is too small a set to rely on.
-- **Not clinically useful yet:** none of these is strong enough for clinical use, and eICU shows about 3.8 critical alerts per patient-day at 5-minute resolution.
+This writes [docs/real_data_report.md](docs/real_data_report.md) (rules, NEWS2 and the synthetic baseline on real data).
+To train the live model on real data (about 5 minutes; without `--save` it only evaluates):
+
+```bash
+..\.venv\Scripts\python -m app.ml.train_real --save
+```
+
+This writes [docs/model_report.md](docs/model_report.md). Target: death in the ICU within the next 24 h, per reading.
+AUROC per reading:
+
+| Test | Real-data model | NEWS2 | Previous synthetic model |
+|---|---|---|---|
+| eICU, 184 hospitals, each fold tested on hospitals it never saw | **0.718 ± 0.031** | 0.698 | 0.665 |
+| MIMIC-III (a different hospital system, never used for training) | 0.705 | **0.742** | 0.659 |
+
+The real-data model beats the synthetic one everywhere and NEWS2 on unseen eICU hospitals, but not on MIMIC: it is
+decision support on top of the rules and NEWS2, never a replacement. The demo datasets are small (about 100 ICU deaths);
+the full credentialed eICU / MIMIC-IV would give a stronger model.
 
 When the data is present, seeding makes Meera Iyer's and Ananya Das's monitors replay real eICU stays (two different hospitals) and Imran Khan's a MIMIC-III stay. Admin → **Data sources** can switch any monitor to another eICU or MIMIC stay or a BIDMC record.
 
@@ -112,6 +122,16 @@ A real sensor connects through a small adapter program that prints one JSON line
 
 ```bash
 python scripts/sensor_example.py | python scripts/device_client.py stream --source stdin
+```
+
+Real Bluetooth devices (any that implement the standard Heart Rate, Pulse Oximeter, Blood Pressure or Health
+Thermometer service) are read by the gateway program and piped into the device client:
+
+```bash
+pip install -r scripts/requirements-ble.txt
+```
+```bash
+python scripts/ble_gateway.py | python scripts/device_client.py stream --source stdin
 ```
 
 Hospital setup, device choices (Bluetooth services, gateways) and operations: [docs/HANDOFF.md](docs/HANDOFF.md).
@@ -152,8 +172,11 @@ Covers:
 | `scripts/device_client.py` | Stand-alone device: pair with a code, then stream sealed + signed readings |
 | `scripts/crypto_demo.py` | Prints every crypto step (DH values, AES ciphertext, digest, RSA/ECDSA signatures) for the viva |
 | `scripts/verify_audit.py` | Recomputes the audit chain and checks checkpoint signatures |
-| `scripts/rotate_master_key.py` | Re-wraps patient keys, TOTP secrets and server keys under a new master key (server stopped) |
-| `python -m app.ml.train` (in `backend/`) | Retrains the model, pins its SHA-512, writes `docs/model_report.md` |
+| `scripts/rotate_master_key.py` | Re-wraps patient keys, TOTP secrets and server keys under a new master key (server stopped); works with `.env` or the sealed key file |
+| `scripts/seal_master_key.py` | Moves the master keys out of `.env` into `secrets/master_keys.sealed` (AES-256-GCM under PBKDF2-HMAC-SHA-512 of a passphrase typed at start-up) |
+| `scripts/ble_gateway.py` | Reads standard Bluetooth health devices and prints JSON lines for `device_client.py` |
+| `python -m app.ml.train_real --save` (in `backend/`) | Trains the live model on eICU, tests it on unseen hospitals and on MIMIC, pins its SHA-512 and threshold, writes `docs/model_report.md` |
+| `python -m app.ml.train` (in `backend/`) | Rebuilds the synthetic baseline model (replaces the shipped one) |
 
 ## Algorithm map
 
@@ -165,6 +188,8 @@ Every technique comes from a course family. Primitives come from the `cryptograp
 | Packet authenticity | **RSA-3072-PSS** over **SHA-512** digest: *sign-the-digest*, *direct digital signature* | RSA digital signature | `security/signatures.py`, `readings/ingest.py` |
 | Readings, PII, notes at rest | **AES-256-GCM** under a per-patient key; AAD binds patient, device, seq, timestamp | AES | `security/crypto.py` |
 | Key wrapping (envelope) | Patient key wrapped with **AES-256-GCM** under a versioned master key | AES | `security/crypto.py` |
+| Clinical labels at rest | Band, AI score and reasons inside **AES-256-GCM**; alert reason matched by a blind index **HMAC-SHA-512**(HKDF-SHA-512(patient key)) | AES, Hash | `security/labels.py` |
+| Sealed master key (option) | **AES-256-GCM** under **PBKDF2-HMAC-SHA-512**(passphrase, 600,000 rounds) | AES, Hash | `keysource.py` |
 | Audit ledger | **SHA-512** hash chain plus **ECDSA P-384** signed checkpoints | Hash, DSA (elliptic-curve form) | `security/audit.py` |
 | Passwords | **PBKDF2-HMAC-SHA-512**, 210,000 iterations, 16-byte salt | Hash | `security/hashing.py` |
 | MFA | TOTP with **HMAC-SHA-512** | Hash | `security/auth.py` |
@@ -199,21 +224,21 @@ Unauthorized and non-existent patients both return **404**, so IDs cannot be pro
 | Eavesdropping on the network | TLS 1.3, plus the inner DH + AES-GCM seal (data stays protected even if TLS ends at a proxy) |
 | Forged or modified readings | RSA signature over the whole packet; the GCM tag |
 | Replayed readings | Strictly increasing sequence (atomic compare-and-set), ±60 s timestamp window |
-| Stolen database or backup | Readings, PII, notes and TOTP secrets are AES-GCM ciphertext; keys are wrapped by a master key held only in the environment |
+| Stolen database or backup | Readings, PII, notes, TOTP secrets **and the clinical labels** (band, AI score, alert reasons) are AES-GCM ciphertext; alert reasons are matched through an HMAC-SHA-512 blind index; keys are wrapped by a master key that is never in the database (sealed file or HSM/KMS option) |
 | Ciphertext moved between rows | AES-GCM associated data binds patient, device, seq and timestamp |
 | Compromised device key on server | Server stores device **public** keys only; simulator keys are in a separate encrypted keystore |
 | Password guessing | PBKDF2 (210k iterations), rate limit, 5-try lockout, TOTP for staff, constant-time unknown-user path |
 | CSRF / clickjacking / XSS | SameSite=Strict httpOnly cookie, required `X-RPM-Request` header and Origin check, CSP, `X-Frame-Options: DENY` |
 | Insider editing the audit log | DB triggers block UPDATE/DELETE; a hash chain detects edits; ECDSA checkpoints detect full-chain rewrites |
 | Malicious model file | Pinned SHA-512 checked before unpickling |
-| Data leakage via logs | Only reason codes (`SPO2_LOW` …) are stored or logged in clear, never vital values |
+| Data leakage via logs | No vital values, bands or reason codes are written to logs or the audit ledger |
 
 Known limits:
-- The model is trained on synthetic data. Real data is only used to evaluate it (indicative, 100 stays), so it is not clinically validated.
-- No real wearable hardware: devices are simulated. The pairing protocol and `device_client.py` are what a real device would implement.
-- MIMIC vitals are hourly while the model expects minute-level readings, and NEWS2 lacks the oxygen-therapy and consciousness inputs.
-- The master key lives in an environment variable. Production would use an HSM or KMS.
-- Rate limits and the TOTP replay guard are in-memory (single process).
+- The model is trained on the small open eICU demo (about 100 ICU deaths) and is not clinically validated; NEWS2 is still better on MIMIC.
+- The Bluetooth gateway follows the official GATT specifications and its parsers are tested byte-for-byte, but it has not been run against physical devices here.
+- NEWS2 lacks the oxygen-therapy and consciousness inputs, which wearables do not measure.
+- The master key defaults to `.env` for the demo. `scripts/seal_master_key.py` moves it into a passphrase-sealed file, and `RPM_MASTER_KEY_SOURCE=command` lets an HSM or cloud KMS supply it; no HSM hardware was available to test with.
+- Which patients exist and how many open alerts they have is still visible as row counts (not their content).
 - Polling read events are logged once per minute per viewer.
 - DTLS/CoAP devices are out of scope.
 
@@ -221,22 +246,19 @@ Known limits:
 
 - **Partial readings:** a device may send any subset of the six vitals (blood pressure as a pair). Missing ones show as *Not measured*; rules and NEWS2 use what is present, and the model scores only complete readings.
 - **Rules:** clinical thresholds (SpO₂ < 92, HR > 120 or < 45, SBP < 90 or > 180, T ≥ 38.5 °C, RR > 24 …) and **NEWS2** always win.
-- **Model:** `HistGradientBoostingClassifier` on 18 features: vitals, deltas, and z-scores against the patient's own encrypted rolling baseline. The model can raise the band, never lower it.
-- **Results** (see [docs/model_report.md](docs/model_report.md); synthetic data, test patients separate from training patients):
-  - 100% of deterioration episodes detected, vs 97.8% for rules only.
-  - Median first alarm 7 min into an episode, vs 12 min for rules only.
-  - About 0.07 false critical alarms per patient-day.
+- **Model:** `HistGradientBoostingClassifier` on 18 features: vitals, deltas, and z-scores against the patient's own encrypted rolling baseline, **trained on real eICU ICU patients** (death in the ICU within 24 h). The model can raise the band, never lower it. Its alert threshold (95% specificity on held-out hospitals) is pinned with its SHA-512.
+- **Results:** see the table under *Real data* and [docs/model_report.md](docs/model_report.md). The synthetic baseline (`train.py`) is kept for comparison.
 
 ## Layout
 
 ```
 backend/app/security/   aead, sealing (DH), signatures (RSA/ECDSA), crypto (envelope), hashing, audit, auth, rbac, server_keys
 backend/app/readings/   ingest pipeline
-backend/app/ml/         rules + NEWS2, features, synthetic data, train, infer, pinned model
+backend/app/ml/         rules + NEWS2, features, train_real (eICU), synthetic baseline, infer, pinned model
 backend/app/api/        auth, patients, admin, ingest routes
 backend/app/simulator.py  device keystore + live simulator
 frontend/src/           React app (login + TOTP, patient, clinician, admin pages)
-scripts/                env, certs, TOTP helper, audit verify, key rotation, crypto demo
+scripts/                env, certs, TOTP helper, audit verify, key sealing and rotation, Bluetooth gateway, crypto demo
 ```
 
 ## Docker (optional, PostgreSQL)

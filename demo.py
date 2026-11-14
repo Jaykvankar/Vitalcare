@@ -100,7 +100,9 @@ def main() -> None:
     Sign in with (also in seed_credentials.txt; passwords are case-sensitive):
 {accounts}
     In demo mode the sign-in page fills the password when you pick a role.
-    Staff then get a 6-digit code on that same page (select Use this code).
+    Staff (dr.mehta, dr.rao, admin) then need a 6-digit code. In a second terminal run:
+      {PY} scripts\\totp_code.py dr.mehta
+    and type the code it prints (it changes every 30 seconds).
 
     Try it:
       dr.mehta  -> worklist ranked by urgency -> open a patient -> acknowledge an alert

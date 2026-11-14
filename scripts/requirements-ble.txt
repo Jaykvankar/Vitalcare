@@ -1,0 +1,2 @@
+# Only needed on a Bluetooth gateway (scripts/ble_gateway.py), not on the server.
+bleak==0.22.3

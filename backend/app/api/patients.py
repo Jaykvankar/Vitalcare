@@ -10,9 +10,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
+from ..ml import infer
 from ..models import Alert, Assignment, Device, Patient, Reading, User
 from ..readings import rollups
-from ..security import audit, auth, crypto, rbac
+from ..security import audit, auth, crypto, labels, rbac
 
 router = APIRouter(prefix="/api", tags=["patients"])
 
@@ -38,11 +39,14 @@ def _alert_counts(db: Session, patient_ids: list[int]) -> dict[int, tuple[int, i
     return {pid: (n, esc) for pid, n, esc in rows}
 
 
-def _summary(db: Session, p: Patient, counts: dict[int, tuple[int, int]] | None = None) -> dict:
+def _summary(db: Session, p: Patient, counts: dict[int, tuple[int, int]] | None = None, *,
+             decrypt: bool = True) -> dict:
+    """decrypt=False (sharing paused, clinician view): the band and score stay encrypted and are not shown."""
     if counts is None:
         counts = _alert_counts(db, [p.id])
     open_alerts, escalated = counts.get(p.id, (0, 0))
-    return {"escalated_alerts": escalated, "id": p.id, "name": p.user.full_name, "band": p.last_band, "risk": p.last_score,
+    band, risk = labels.patient_status(crypto.patient_dek(p) if decrypt and p.last_status_enc else None, p)
+    return {"escalated_alerts": escalated, "id": p.id, "name": p.user.full_name, "band": band, "risk": risk,
             "last_reading_at": _iso(p.last_reading_at), "open_alerts": open_alerts,
             "consent_active": p.consent_active, "data_source": _source(p.id)}
 
@@ -65,7 +69,7 @@ def worklist(user: User = Depends(auth.require_role("clinician")), db: Session =
         .where(Assignment.clinician_id == user.id, Patient.erased_at.is_(None))
     ).scalars().all()
     counts = _alert_counts(db, [p.id for p in rows])
-    items = [_summary(db, p, counts) for p in rows]
+    items = [_summary(db, p, counts, decrypt=p.consent_active) for p in rows]
     items.sort(key=lambda x: (BAND_ORDER.get(x["band"], 3), -(x["risk"] or 0), -x["open_alerts"]))
     return items
 
@@ -74,7 +78,7 @@ def worklist(user: User = Depends(auth.require_role("clinician")), db: Session =
 def profile(patient_id: int, user: User = Depends(auth.require_role("clinician", "patient")),
             db: Session = Depends(get_db)) -> dict:
     p = rbac.patient_for_read(db, user, patient_id, need_consent=False)
-    out = _summary(db, p)
+    out = _summary(db, p, decrypt=p.consent_active or user.role == "patient")
     out["devices"] = [
         {"id": d.id, "label": d.label, "active": d.active, "last_seen": _iso(d.last_seen),
          "device_type": d.device_type}
@@ -111,13 +115,16 @@ def readings(patient_id: int, range: str = Query("6h", pattern="^(6h|24h|7d)$"),
         count = sum(pt.pop("n") for pt in points)
     audit.append("decrypt_readings", actor_id=user.id, actor=user.username, target=f"patient:{p.id}",
                  detail=f"range={range}")
-    return {"patient_id": p.id, "range": range, "count": count, "latest": latest, "points": _downsample(points)}
+    return {"patient_id": p.id, "range": range, "count": count, "latest": latest, "points": _downsample(points),
+            "model_threshold": infer.ML_THRESHOLD}   # pinned with the model's SHA-512 (model_hash.py)
 
 
 def _point(dek: bytes, r: Reading) -> dict:
     v = crypto.decrypt_reading(dek, r)
-    return {"ts": r.ts, **v, "band": r.band, "risk": r.risk_score,
-            "reasons": [c for c in r.reason_codes.split(",") if c]}
+    band, risk, reasons = labels.reading_labels(v, r)
+    for k in ("band", "risk", "reasons"):
+        v.pop(k, None)
+    return {"ts": r.ts, **v, "band": band, "risk": risk, "reasons": reasons}
 
 
 def _downsample(points: list[dict]) -> list[dict]:
@@ -152,8 +159,9 @@ def alerts(patient_id: int, status: str = Query("all", pattern="^(open|all)$"),
     out = []
     for a in rows:
         ack_by = db.get(User, a.acknowledged_by) if a.acknowledged_by else None
+        code, severity = labels.alert_details(dek, a)
         out.append({
-            "id": a.id, "reason_code": a.reason_code, "severity": a.severity, "status": a.status,
+            "id": a.id, "reason_code": code, "severity": severity, "status": a.status,
             "first_seen": _iso(a.first_seen), "last_seen": _iso(a.last_seen), "occurrences": a.occurrences,
             "acknowledged_by": ack_by.full_name if ack_by else None, "acknowledged_at": _iso(a.acknowledged_at),
             "escalated_at": _iso(a.escalated_at),
@@ -183,7 +191,7 @@ def acknowledge(alert_id: int, body: AckIn, user: User = Depends(auth.require_ro
                                               patient_id=p.id, field=f"ack:{a.id}")
     db.commit()
     audit.append("alert_ack", actor_id=user.id, actor=user.username, target=f"patient:{p.id}",
-                 detail=f"alert={a.id} code={a.reason_code}")
+                 detail=f"alert={a.id}")   # the reason stays encrypted: the ledger itself is not
     return {"ok": True}
 
 
@@ -224,9 +232,17 @@ def export_my_data(user: User = Depends(auth.require_role("patient")), db: Sessi
                     "consent_active": p.consent_active, "consent_changed_at": _iso(p.consent_changed_at)},
         "devices": [{"id": d.id, "label": d.label, "kind": d.kind, "active": d.active, "paired_at": _iso(d.created_at)}
                     for d in db.execute(select(Device).where(Device.patient_id == p.id)).scalars()],
-        "readings": [{"time": datetime.fromtimestamp(r.ts, UTC).isoformat(), "device": r.device_id,
-                      **crypto.decrypt_reading(dek, r), "band": r.band, "ai_risk": r.risk_score,
-                      "reasons": r.reason_codes} for r in rows],
-        "alerts": [{"reason": a.reason_code, "severity": a.severity, "status": a.status,
-                    "first_seen": _iso(a.first_seen), "last_seen": _iso(a.last_seen)} for a in alerts_rows],
+        "readings": [_export_reading(dek, r) for r in rows],
+        "alerts": [{"reason": code, "severity": severity, "status": a.status,
+                    "first_seen": _iso(a.first_seen), "last_seen": _iso(a.last_seen)}
+                   for a in alerts_rows for code, severity in [labels.alert_details(dek, a)]],
     }
+
+
+def _export_reading(dek: bytes, r: Reading) -> dict:
+    v = crypto.decrypt_reading(dek, r)
+    band, risk, reasons = labels.reading_labels(v, r)
+    for k in ("band", "risk", "reasons"):
+        v.pop(k, None)
+    return {"time": datetime.fromtimestamp(r.ts, UTC).isoformat(), "device": r.device_id, **v,
+            "band": band, "ai_risk": risk, "reasons": ",".join(reasons)}

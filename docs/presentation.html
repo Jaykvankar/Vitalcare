@@ -223,15 +223,15 @@
 <!-- 9 -->
 <section class="slide">
   <div class="eyebrow">Real data</div>
-  <h2>Tested on real ICU patients (eICU demo, 184 hospitals)</h2>
+  <h2>Trained and tested on real ICU patients (eICU demo, 184 hospitals)</h2>
   <div class="grid g4" style="margin-bottom:1em">
-    <div class="card"><div class="big">0.734</div><span class="small">NEWS2 AUROC (2,032 stays)</span></div>
-    <div class="card"><div class="big">0.687</div><span class="small">Our synthetic-trained model</span></div>
-    <div class="card accent"><div class="big">0.760</div><span class="small">Model trained on real data, tested on unseen hospitals (±0.052)</span></div>
-    <div class="card"><div class="big">3.8</div><span class="small">Critical alerts per patient-day</span></div>
+    <div class="card accent"><div class="big">0.718</div><span class="small">Our model, trained on real eICU data, on hospitals it never saw (±0.031)</span></div>
+    <div class="card"><div class="big">0.698</div><span class="small">NEWS2 on the same readings</span></div>
+    <div class="card"><div class="big">0.665</div><span class="small">Earlier synthetic-trained model</span></div>
+    <div class="card"><div class="big">0.705</div><span class="small">Our model on MIMIC, a separate hospital system (NEWS2 0.742)</span></div>
   </div>
-  <p class="small">AUROC: how well the score separates patients who later died from those who survived (0.5 = chance). Hospital-held-out cross-validation means no hospital is in both training and testing.</p>
-  <p class="small muted">Also evaluated on MIMIC-III demo and BIDMC. Full tables: <span class="mono">docs/real_data_report.md</span>. Honest result: retraining on real data is the clear next step.</p>
+  <p class="small">Target: "dies in the ICU within 24 h", scored at every reading. AUROC: 0.5 = chance, 1 = perfect. Each eICU score is for hospitals the model never trained on; MIMIC was never used for training.</p>
+  <p class="small muted">Honest result: better than our old model everywhere and than NEWS2 on unseen eICU hospitals, not on MIMIC, so the AI only adds warnings on top of the rules and NEWS2. Full tables: <span class="mono">docs/model_report.md</span>.</p>
 </section>
 
 <!-- 10 -->
@@ -256,14 +256,14 @@
   <h2>What is not done yet</h2>
   <div class="grid g2">
     <div class="card warn"><h3>Limits</h3><ul class="small">
-      <li>Bluetooth adapters for specific devices are not written; the gateway path is built and tested with a program that feeds readings.</li>
-      <li>The shipped model is trained on synthetic data; NEWS2 still beats it on real patients.</li>
-      <li>Master key in an environment variable, not a hardware security module.</li>
+      <li>Bluetooth gateway decodes the standard health services and is tested byte-for-byte, but not on physical devices.</li>
+      <li>The AI is trained on a small open dataset (about 100 ICU deaths); NEWS2 is still better on MIMIC.</li>
+      <li>Master key can be sealed or come from an HSM/KMS; no HSM hardware was tested.</li>
       <li>Not clinically certified; a research prototype.</li>
     </ul></div>
     <div class="card accent"><h3>Future work</h3><ul class="small">
-      <li>Retrain on real data (credentialed eICU / MIMIC-IV).</li>
-      <li>BLE adapters for standard health devices; phone app as gateway.</li>
+      <li>Retrain on the full credentialed eICU / MIMIC-IV.</li>
+      <li>Certify specific Bluetooth devices; phone app as gateway.</li>
       <li>HL7 FHIR feed from hospital bedside monitors.</li>
       <li>SMS / push alerts, cloud key management service.</li>
     </ul></div>

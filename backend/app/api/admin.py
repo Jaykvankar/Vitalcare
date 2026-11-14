@@ -305,7 +305,7 @@ def erase_patient(patient_id: int, body: EraseIn, admin: User = Depends(admin_on
     p.erased_at = now
     p.consent_active = False
     p.dob_enc = p.phone_enc = p.address_enc = p.state_enc = None
-    p.last_band = p.last_score = None
+    p.last_band = p.last_score = p.last_status_enc = None
     p.user.active = False
     p.user.full_name = f"Erased patient {p.id}"
     for d in db.execute(select(Device).where(Device.patient_id == p.id)).scalars():

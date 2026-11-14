@@ -118,8 +118,17 @@ def regenerate_recovery_codes(user: User = Depends(auth.require_role("admin", "c
     return {"recovery_codes": codes}
 
 
+# Demo helpers answer only callers on this machine. "testclient" is the in-process test client's name; it can never
+# be a network address. run_server.py also refuses to start demo mode on a non-local address.
+LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def is_local(request: Request) -> bool:
+    return request.client is not None and request.client.host in LOCAL_CLIENTS
+
+
 @router.get("/demo-accounts")
-def demo_accounts(db: Session = Depends(get_db)) -> dict:
+def demo_accounts(request: Request, db: Session = Depends(get_db)) -> dict:
     """Demo helper for the sign-in page's "Try a role" buttons.
 
     Only in demo mode. The readable password from seed_credentials.txt is included so the sign-in page can fill
@@ -132,7 +141,7 @@ def demo_accounts(db: Session = Depends(get_db)) -> dict:
     from ..config import PROJECT_DIR, get_settings
     from ..seed import previous_passwords
 
-    if not get_settings().demo_mode:
+    if not get_settings().demo_mode or not is_local(request):
         return {"demo": False, "accounts": []}
     passwords = previous_passwords(os.environ.get("RPM_SEED_CREDENTIALS", str(PROJECT_DIR / "seed_credentials.txt")))
     users = db.scalars(select(User).where(User.demo_account.is_(True), User.active.is_(True)).order_by(User.id)).all()
@@ -143,28 +152,6 @@ def demo_accounts(db: Session = Depends(get_db)) -> dict:
             row["password"] = passwords[u.username]
         accounts.append(row)
     return {"demo": True, "accounts": accounts}
-
-
-@router.get("/demo-code")
-def demo_code(request: Request, db: Session = Depends(get_db)) -> dict:
-    """Demo helper: the current 6-digit code, so a presenter does not need a phone.
-
-    Only when the server runs in demo mode (demo.py sets RPM_DEMO_MODE), only for accounts the demo
-    seed created, and only after the correct password (a pending session). Never available otherwise.
-    """
-    from ..config import get_settings
-
-    if not get_settings().demo_mode:
-        raise HTTPException(404, "Not found")
-    user, sess = auth.pending_user(request, db)
-    secret = auth.load_totp_secret(user) if user.demo_account and user.totp_confirmed else None
-    if secret is None or sess.mfa_ok:
-        raise HTTPException(404, "Not found")
-    import time
-
-    now = time.time()
-    audit.append("demo_code_shown", actor_id=user.id, actor=user.username)
-    return {"code": auth.totp(secret).now(), "seconds_left": int(30 - now % 30)}
 
 
 @router.post("/logout")

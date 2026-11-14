@@ -22,7 +22,7 @@ from ..ml import infer
 from ..ml.features import new_state
 from ..ml.rules import news2_inputs_present, validate
 from ..models import Alert, Device, Patient, Reading
-from ..security import audit, crypto, inspector, sealing, server_keys, signatures
+from ..security import audit, crypto, inspector, labels, sealing, server_keys, signatures
 from ..security.hashing import b64d, canonical
 from . import rollups
 
@@ -116,56 +116,61 @@ def process(db: Session, pkt: Packet, *, now: int | None = None) -> dict:
              if patient.state_enc else new_state())
     result = infer.score(vitals, state)
 
-    # 6. Encrypt and store. Only band / score / reason codes are in the clear.
-    payload = {**vitals, "news2": result.news2, "news2_inputs": news2_inputs_present(vitals)}
+    # 6. Encrypt and store. Vitals AND the clinical labels (band, AI score, reasons) are ciphertext.
+    codes = [code for code, _ in result.reasons]
+    payload = {**vitals, "news2": result.news2, "news2_inputs": news2_inputs_present(vitals),
+               "band": result.band, "risk": result.risk, "reasons": codes}
     r_nonce, r_ct = crypto.encrypt_reading(
         dek, payload, patient_id=patient.id, device_id=device.id, seq=pkt.seq, ts=pkt.ts
     )
-    codes = ",".join(code for code, _ in result.reasons)
     db.add(Reading(patient_id=patient.id, device_id=device.id, seq=pkt.seq, ts=pkt.ts,
-                   nonce=r_nonce, ciphertext=r_ct, band=result.band, risk_score=result.risk,
-                   reason_codes=codes))
+                   nonce=r_nonce, ciphertext=r_ct))
     patient.state_enc = crypto.encrypt_json(dek, result.state, patient_id=patient.id, field="state")
     when = datetime.fromtimestamp(pkt.ts, UTC)
     if patient.last_reading_at is None or _aware(patient.last_reading_at) <= when:
-        patient.last_band, patient.last_score, patient.last_reading_at = result.band, result.risk, when
+        labels.set_patient_status(dek, patient, result.band, result.risk)
+        patient.last_reading_at = when
     device.last_seen = when
     rollups.add(db, patient_id=patient.id, dek=dek, ts=pkt.ts, values={**vitals, "risk": result.risk}, band=result.band)
     # (partial readings: missing vitals and a missing AI score are simply absent from every stored copy)
-    upsert_alerts(db, patient.id, result.reasons, when)
+    upsert_alerts(db, patient.id, dek, result.reasons, when)
     db.commit()
     inspector.record(packet=pkt.model_dump(), epk=epk, server_pub=keys.dh_public_raw, nonce=nonce, ct=ct, sig=sig,
                      signed=signed, prev_seq=prev_seq, skew_s=current - pkt.ts, patient_id=patient.id,
-                     key_version=patient.key_version, store_nonce=r_nonce, store_ct=r_ct, band=result.band,
+                     key_version=patient.key_version, store_nonce=r_nonce, store_ct=r_ct,
                      vitals_count=len(vitals), scored=result.risk is not None)
     del plaintext, vitals, payload, dek  # drop plaintext references promptly
-    return {"accepted": True, "band": result.band, "reasons": codes.split(",") if codes else []}
+    return {"accepted": True, "band": result.band, "reasons": codes}
 
 
 def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def upsert_alerts(db: Session, patient_id: int, reasons: list[tuple[str, str]], when: datetime) -> None:
+def upsert_alerts(db: Session, patient_id: int, dek: bytes, reasons: list[tuple[str, str]], when: datetime) -> None:
     """One open alert per patient per reason code; repeated hits update it instead of spamming.
 
-    A partial unique index guarantees the "one open alert" rule even when two readings for the
-    same patient are processed at the same time; the loser of the race updates the winner's row.
+    The reason is stored only as a blind index (HMAC-SHA-512 under a key derived from the patient's DEK) plus an
+    AES-256-GCM copy, see security/labels.py. A partial unique index on the blind index guarantees the "one open
+    alert" rule even when two readings for the same patient are processed at the same time; the loser of the race
+    updates the winner's row.
     """
     for code, severity in reasons:
+        tag = labels.alert_tag(dek, patient_id, code)
         for _ in range(3):
             existing = db.execute(
-                select(Alert).where(Alert.patient_id == patient_id, Alert.reason_code == code, Alert.status == "open")
+                select(Alert).where(Alert.patient_id == patient_id, Alert.reason_tag == tag, Alert.status == "open")
             ).scalar_one_or_none()
             if existing:
                 existing.occurrences += 1
                 existing.last_seen = max(_aware(existing.last_seen), when)
-                if severity == "critical":
-                    existing.severity = "critical"
+                if severity == "critical" and labels.alert_details(dek, existing)[1] != "critical":
+                    existing.details_enc = labels.encrypt_alert(dek, patient_id, tag, code, "critical")
                 break
             try:
                 with db.begin_nested():
-                    db.add(Alert(patient_id=patient_id, reason_code=code, severity=severity,
+                    db.add(Alert(patient_id=patient_id, reason_tag=tag,
+                                 details_enc=labels.encrypt_alert(dek, patient_id, tag, code, severity),
                                  first_seen=when, last_seen=when))
                 break
             except IntegrityError:

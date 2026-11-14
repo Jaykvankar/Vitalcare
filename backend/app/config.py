@@ -75,7 +75,7 @@ def _int_env(name: str, default: int, *, minimum: int | None = None) -> int:
     return value
 
 
-def load_settings() -> Settings:
+def _env_master_keys() -> tuple[bytes, int, dict[int, bytes]]:
     raw = os.environ.get("RPM_MASTER_KEY")
     if not raw:
         raise ConfigError(
@@ -92,6 +92,24 @@ def load_settings() -> Settings:
         previous[int(ver)] = _decode_key(b64.strip(), f"previous master key v{ver}")
     if version in previous:
         raise ConfigError("RPM_PREVIOUS_MASTER_KEYS must not contain the current key version")
+    return master, version, previous
+
+
+def _master_keys() -> tuple[bytes, int, dict[int, bytes]]:
+    """Master keys from the configured source (env, sealed file, or an HSM/KMS command); see keysource.py."""
+    from . import keysource
+
+    try:
+        bundle = keysource.load()
+    except keysource.KeySourceError as exc:
+        raise ConfigError(str(exc)) from exc
+    if bundle is None:
+        return _env_master_keys()
+    return bundle.key, bundle.version, bundle.previous
+
+
+def load_settings() -> Settings:
+    master, version, previous = _master_keys()
 
     data_dir = Path(os.environ.get("RPM_DATA_DIR", BACKEND_DIR / "data"))
     data_dir.mkdir(parents=True, exist_ok=True)

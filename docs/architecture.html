@@ -259,14 +259,14 @@ footer { padding-block: 48px 0; color: var(--muted); font-size: 0.84rem; border-
   <section id="data">
     <span class="eyebrow">Data</span>
     <h2>What data the project uses</h2>
-    <p class="lede">The live AI model learns from synthetic data because no open dataset marks the minute a patient started to deteriorate. Three real, de-identified datasets are used to test the system honestly and to replay real patients through the encrypted pipeline.</p>
+    <p class="lede">The live AI model is trained on real, de-identified ICU patients from the eICU demo (184 hospitals), tested on hospitals it never saw and on MIMIC-III as a separate hospital system. The real datasets also replay real patients through the encrypted pipeline. The synthetic generator drives demo streams and the earlier baseline model.</p>
     <div class="tablewrap">
       <table class="data">
         <thead><tr><th>Source</th><th>What is in it</th><th>Used for</th><th>Size</th><th>Access</th></tr></thead>
         <tbody>
-          <tr><td><b>Synthetic generator</b><br><span class="small muted"><code>ml/synth.py</code></span></td><td>Generated vital signs for 200 patient-days with hypoxia, tachycardia, hypotension and fever episodes, plus harmless activity spikes</td><td>Training the model (160 patients), testing it (40 different patients), live demo streams</td><td class="num">288,000 readings</td><td><span class="pill open">Built in</span></td></tr>
-          <tr><td><b>eICU Collaborative Research Database Demo</b><br><span class="small muted">PhysioNet v2.0.1</span></td><td>2,520 de-identified ICU stays from 186 US hospitals; heart rate, SpO₂, breathing rate every 5 minutes, arterial and cuff blood pressure, hospital outcome and hospital type. Temperature is rarely charted in these tables.</td><td>Hospital-by-hospital evaluation; replaying real ICU stays (two demo patients)</td><td class="num">≈22 MB download · 2,048 usable stays · 1.21 M rows</td><td><span class="pill open">Open · ODbL</span></td></tr>
-          <tr><td><b>MIMIC-III Clinical Demo</b><br><span class="small muted">PhysioNet v1.4</span></td><td>100 de-identified ICU patients; charted heart rate, SpO₂, breathing rate, blood pressure, temperature; in-hospital outcome</td><td>Real-data evaluation; replaying a real ICU stay through a simulated monitor</td><td class="num">≈77 MB · 128 stays</td><td><span class="pill open">Open · ODbL</span></td></tr>
+          <tr><td><b>Synthetic generator</b><br><span class="small muted"><code>ml/synth.py</code></span></td><td>Generated vital signs for 200 patient-days with hypoxia, tachycardia, hypotension and fever episodes, plus harmless activity spikes</td><td>The earlier baseline model (kept for comparison), live demo streams and the deterioration injection</td><td class="num">288,000 readings</td><td><span class="pill open">Built in</span></td></tr>
+          <tr><td><b>eICU Collaborative Research Database Demo</b><br><span class="small muted">PhysioNet v2.0.1</span></td><td>2,520 de-identified ICU stays from 186 US hospitals; heart rate, SpO₂, breathing rate every 5 minutes, arterial and cuff blood pressure, hospital outcome and hospital type. Temperature is rarely charted in these tables.</td><td><b>Training the live model</b> (death in the ICU within 24 h, per reading), hospital-held-out testing, replaying real ICU stays (two demo patients)</td><td class="num">≈22 MB download · 2,048 usable stays · 1.21 M rows</td><td><span class="pill open">Open · ODbL</span></td></tr>
+          <tr><td><b>MIMIC-III Clinical Demo</b><br><span class="small muted">PhysioNet v1.4</span></td><td>100 de-identified ICU patients; charted heart rate, SpO₂, breathing rate, blood pressure, temperature; in-hospital outcome</td><td>External test of the live model (never used for training); replaying a real ICU stay</td><td class="num">≈77 MB · 128 stays</td><td><span class="pill open">Open · ODbL</span></td></tr>
           <tr><td><b>BIDMC PPG &amp; Respiration</b><br><span class="small muted">PhysioNet v1.0.0</span></td><td>53 ICU recordings, 8 minutes each at 1 Hz; heart rate, SpO₂, breathing rate only</td><td>Testing the rules on real second-by-second variability; replay</td><td class="num">≈0.5 MB · 473 min</td><td><span class="pill open">Open · ODC-BY</span></td></tr>
           <tr><td><b>Hospital's own data</b></td><td>Their staff list, patients, past vital signs (CSV), then live readings from paired devices</td><td>Running the service</td><td class="num">Up to 500 people / 20,000 readings per file</td><td><span class="pill req">Hospital-owned</span></td></tr>
         </tbody>
@@ -305,15 +305,25 @@ footer { padding-block: 48px 0; color: var(--muted); font-size: 0.84rem; border-
         <table class="data">
           <thead><tr><th>Signal</th><th>All stays pooled</th><th>Held-out hospitals (5 folds, mean ± SD)</th><th>Trained on</th></tr></thead>
           <tbody>
-            <tr><td><b>Model trained on real eICU data</b></td><td class="num">–</td><td class="num"><b>0.760 ± 0.052</b></td><td>Other hospitals only</td></tr>
+            <tr><td><b>Stay-level model trained on real eICU data</b></td><td class="num">–</td><td class="num"><b>0.760 ± 0.052</b></td><td>Other hospitals only</td></tr>
             <tr><td>NEWS2 (clinical score)</td><td class="num">0.734</td><td class="num">0.732 ± 0.055</td><td>No training</td></tr>
-            <tr><td>Live app model</td><td class="num">0.687</td><td class="num">0.684 ± 0.060</td><td>Synthetic data</td></tr>
+            <tr><td>Synthetic baseline model</td><td class="num">0.687</td><td class="num">0.684 ± 0.060</td><td>Synthetic data</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 style="margin-top:14px">The live model, scored at every reading (death in the ICU within 24 h)</h3>
+      <div class="tablewrap" style="border:0">
+        <table class="data">
+          <thead><tr><th>Signal</th><th>eICU, hospitals never seen (5 folds)</th><th>MIMIC-III (never used for training)</th></tr></thead>
+          <tbody>
+            <tr><td><b>Live model (trained on eICU)</b></td><td class="num"><b>0.718 ± 0.031</b></td><td class="num">0.705</td></tr>
+            <tr><td>NEWS2</td><td class="num">0.698</td><td class="num"><b>0.742</b></td></tr>
+            <tr><td>Synthetic baseline</td><td class="num">0.665</td><td class="num">0.659</td></tr>
           </tbody>
         </table>
       </div>
       <ul class="bullets small">
-        <li>On real multi-hospital data, NEWS2 beats the synthetic-trained model. The synthetic model only came out ahead on the small MIMIC set.</li>
-        <li>A simple model trained on real data from other hospitals does best on hospitals it never saw. Retraining on real data is the clear next step.</li>
+        <li>The live model now learns from real ICU patients. It beats the synthetic baseline everywhere and NEWS2 on unseen eICU hospitals, but not on MIMIC, so it only adds warnings on top of the rules and NEWS2 (<code>docs/model_report.md</code>).</li>
         <li>At 5-minute resolution there are 3.8 critical alerts per patient-day in these ICU patients: too many for a ward without tuning (alarm fatigue).</li>
         <li>Temperature was charted for only 157 of the 2,048 stays. Elsewhere it is held at 36.9 °C, so fever rules cannot fire for those patients.</li>
       </ul>
@@ -380,7 +390,7 @@ footer { padding-block: 48px 0; color: var(--muted); font-size: 0.84rem; border-
     api: { t: "API, sign-in and access control", d: "Passwords with PBKDF2, TOTP for staff, one-time recovery codes, forced password change, lockout and rate limits stored in the database. A clinician can open only assigned patients; an admin can never decrypt clinical data; revoked consent blocks everyone but the patient.", f: ["security/auth.py", "security/rbac.py", "api/*.py"], a: ["PBKDF2-HMAC-SHA-512", "TOTP HMAC-SHA-512", "SHA-512 session ids"] },
     ledger: { t: "Privacy ledger", d: "Every sign-in, decrypt, acknowledgement, consent change, pairing, import and erasure is appended. Each row stores the SHA-512 of the previous one; every 50 rows the head is signed with the server's ECDSA key. The database also blocks edits and forks.", f: ["security/audit.py", "scripts/verify_audit.py"], a: ["SHA-512 hash chain", "ECDSA P-384"] },
     jobs: { t: "Background jobs", d: "Once a minute: escalate critical alerts left unacknowledged for 15 minutes. Every 10 minutes: remove expired sessions and pairing codes, and purge readings older than the retention period (365 days by default).", f: ["app/jobs.py"], a: [] },
-    db: { t: "Database", d: "Holds ciphertext plus the minimum in clear needed to run the service: ids, times, band, risk score and reason codes such as SPO2_LOW, never the measured values. Alembic manages schema changes. SQLite for a laptop, PostgreSQL for a hospital.", f: ["models.py", "migrations/"], a: [] },
+    db: { t: "Database", d: "Holds ciphertext plus only ids, times and row counts in clear. Vitals, band, AI score and alert reasons are AES-256-GCM ciphertext; alert reasons are matched through an HMAC-SHA-512 blind index. Alembic manages schema changes. SQLite for a laptop, PostgreSQL for a hospital.", f: ["models.py", "migrations/"], a: [] },
     secrets: { t: "Key store", d: "The 256-bit master key lives in the server's environment (.env), never in the database. The server's Diffie–Hellman and ECDSA private keys are stored encrypted under it. Rotation re-wraps keys without re-encrypting any reading.", f: ["config.py", "security/server_keys.py", "scripts/rotate_master_key.py"], a: ["AES-256-GCM", "versioned keys"] },
     web: { t: "Web app", d: "One React app, loaded per role so a patient never downloads admin code. Patients see their own data, consent and export. Clinicians get the risk-sorted worklist, charts, AI explanations, alerts, pairing and history import. Admins manage people, care teams, imports, devices and the ledger.", f: ["frontend/src/pages/*", "frontend/src/components/*"], a: ["httpOnly SameSite cookie", "CSRF header"] },
   };

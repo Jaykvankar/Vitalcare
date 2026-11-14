@@ -131,7 +131,10 @@ The database schema is created and upgraded automatically at start-up (Alembic).
 
 - [ ] `https://<name>/api/health/ready` returns `"ready": true`
 - [ ] The browser shows the site as secure (no certificate warning)
-- [ ] `.env` is backed up in the hospital's secret store, **separately** from database backups
+- [ ] The master key is not left readable in `.env`: run `python scripts/seal_master_key.py` (passphrase typed at
+      start-up) or set `RPM_MASTER_KEY_SOURCE=command` so the hospital's HSM / KMS supplies it (section 7)
+- [ ] The master key (or the sealed file **and** its passphrase) is backed up in the hospital's secret store,
+      **separately** from database backups
 - [ ] A restore from backup has been tested on a spare machine
 - [ ] The first admin has signed in, set up two-step sign-in and saved the 10 recovery codes
 - [ ] `python scripts/verify_audit.py` reports `"ok": true`
@@ -212,8 +215,19 @@ Device status in the app: **Receiving readings** (last reading within 2 min), **
 Prefer devices that publish the standard Bluetooth services above or document their data interface.
 Devices that only work with their own phone app usually cannot be connected.
 
-A Python Bluetooth library such as `bleak` can read the standard services on Windows, Linux and macOS.
-That adapter is **not part of this project yet**; it is the main piece a hospital or integrator adds.
+**Bluetooth gateway (included).** `scripts/ble_gateway.py` reads any device that implements the standard
+services above, using the `bleak` library (Windows, Linux, macOS), and prints one JSON line per reading:
+
+```bash
+pip install -r scripts/requirements-ble.txt
+python scripts/ble_gateway.py --scan
+python scripts/ble_gateway.py | python scripts/device_client.py stream --source stdin
+```
+
+It decodes the official measurement formats (IEEE 11073 SFLOAT/FLOAT, mmHg or kPa, °C or °F, the heart-rate
+strap's skin-contact flag), collects what arrives in a 30-second window, and sends only what was measured. The
+parsers are tested byte-for-byte against the specification (`backend/tests/test_ble.py`); test each device model
+on site before relying on it, since this was not run against physical devices during the project.
 
 ### 5.3 Setting up one gateway (per patient)
 
@@ -300,12 +314,22 @@ More detail per screen: `docs/user_guide.md`.
 | Task | How | How often |
 |---|---|---|
 | Health check | `GET /api/health/ready` (database, keys, model integrity) | Every minute, from the hospital's monitoring |
-| Backups | `pg_dump` of the database; `.env` kept separately | Daily; test restore quarterly |
+| Backups | `pg_dump` of the database; `.env` and the sealed key file kept separately | Daily; test restore quarterly |
 | Ledger check | `python scripts/verify_audit.py` or Admin → Privacy ledger → Verify integrity | Weekly |
 | Master key rotation | Stop server → `python scripts/rotate_master_key.py` → start | Yearly, or after staff with key access leave |
 | Certificate renewal | Replace the files at `RPM_TLS_CERT` / `RPM_TLS_KEY`, restart | Before expiry |
 | Updates | Pull the new version, rebuild, restart (schema upgrades run automatically) | As released |
 | Retention | Automatic, readings older than `RPM_RETENTION_DAYS` are deleted | Continuous |
+
+### Where the master key lives (`RPM_MASTER_KEY_SOURCE`)
+
+| Source | How it works | Use for |
+|---|---|---|
+| `env` (default) | Key in `.env` | Laptop demo only |
+| `file` | `python scripts/seal_master_key.py` writes `secrets/master_keys.sealed` = AES-256-GCM under PBKDF2-HMAC-SHA-512 (600,000 rounds) of a passphrase, and removes the key from `.env`. The server asks for the passphrase when it starts (or reads `RPM_MASTER_PASSPHRASE` from the operating system's secret store, then forgets it) | A single server without an HSM |
+| `command` | At start-up the server runs `RPM_MASTER_KEY_COMMAND`, which prints `{"version": n, "key": "<base64>", "previous": {...}}`. The command asks the hospital's HSM, cloud KMS or Vault for the key, so no key is stored on the server | Hospitals with an HSM / KMS |
+
+Rotation works with `env` and `file` (the sealed file is re-sealed with the same passphrase); with `command`, rotate in the HSM / KMS.
 
 ---
 
@@ -328,9 +352,9 @@ More detail per screen: `docs/user_guide.md`.
 * Hospitals that want a better shared AI model should not pool patient data through Vitalcare. Options:
   train on de-identified research data under a data use agreement (as done here with eICU), or keep data
   local and share only model updates (federated learning, not built).
-* The eICU results show why this matters: a model trained on other hospitals reached AUROC 0.76 on
-  hospitals it had never seen, while the synthetic-trained model in the app reached 0.68 and NEWS2 0.73.
-  **Retrain on real data and validate on each new hospital's own patients before relying on the AI score.**
+* The shipped model is trained on the eICU demo (184 hospitals). Per reading it reached AUROC 0.72 on hospitals it
+  had never seen (NEWS2 0.70) but 0.71 on MIMIC, where NEWS2 reached 0.74: results move between hospital systems.
+  **Validate on each new hospital's own patients before relying on the AI score.**
 
 ---
 
@@ -339,12 +363,11 @@ More detail per screen: `docs/user_guide.md`.
 | Limitation | Next step |
 |---|---|
 | Not a certified medical device | Clinical validation and regulatory process before any clinical decision relies on it |
-| AI model trained on synthetic data | Retrain on real multi-hospital data (eICU full, credentialed) and validate per hospital |
-| All six vitals required per reading | Allow missing vitals per reading and show them as "not measured" |
-| No Bluetooth adapter included | Write and certify adapters for the chosen device models (`bleak` for standard BLE services) |
+| AI model trained on the small eICU demo (beats NEWS2 on unseen eICU hospitals, not on MIMIC) | Retrain on the full credentialed eICU / MIMIC-IV and validate on each hospital's own patients |
+| Bluetooth gateway not tested with physical devices | Test and certify the chosen device models on site |
 | Device client installs the whole backend | Package a slim client with only `cryptography` and `httpx` |
 | Alert thresholds tuned for demonstration | Tune with clinicians for the ward or home setting; measure alarm burden |
-| Master key in an environment file | Move to an HSM or cloud KMS |
+| Demo keeps the master key in `.env` | Use the sealed key file, or the `command` source with an HSM / cloud KMS |
 | No push notifications (SMS / pager) | Connect escalations to the hospital's paging system |
 
 ---
@@ -353,7 +376,10 @@ More detail per screen: `docs/user_guide.md`.
 
 | Setting (`.env`) | Purpose | Default |
 |---|---|---|
-| `RPM_MASTER_KEY`, `RPM_MASTER_KEY_VERSION` | 256-bit master key and its version | created by `init_env.py` |
+| `RPM_MASTER_KEY_SOURCE` | Where the master key comes from: `env`, `file` (sealed, passphrase at start-up) or `command` (HSM / KMS) | `env` |
+| `RPM_MASTER_KEY`, `RPM_MASTER_KEY_VERSION` | 256-bit master key and its version (`env` source only) | created by `init_env.py` |
+| `RPM_MASTER_KEY_FILE` | Sealed key file (`file` source) | `secrets/master_keys.sealed` |
+| `RPM_MASTER_KEY_COMMAND` | Command that prints the key bundle JSON (`command` source) | none |
 | `DATABASE_URL` | PostgreSQL connection | SQLite in `backend/data/` |
 | `RPM_ALLOWED_ORIGINS` | The site's own https address (CSRF protection) | `https://localhost:8443` |
 | `RPM_SELF_URL` | Address the server uses for its built-in demo monitors | `https://localhost:8443` |
@@ -369,4 +395,7 @@ More detail per screen: `docs/user_guide.md`.
 | `python scripts/device_client.py pair / stream` | Gateway pairing and streaming |
 | `python scripts/verify_audit.py` | Check the privacy ledger |
 | `python scripts/rotate_master_key.py` | Rotate the master key (server stopped) |
+| `python scripts/seal_master_key.py` | Move the master key out of `.env` into a passphrase-sealed file |
+| `python scripts/ble_gateway.py` | Read standard Bluetooth health devices for the gateway |
+| `python -m app.ml.train_real --save` (in `backend/`) | Retrain the AI model on eICU and re-test it on unseen hospitals and MIMIC |
 | `python -m app.ml.eval_real` (in `backend/`) | Re-run the real-data evaluation report |

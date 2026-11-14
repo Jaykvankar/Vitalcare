@@ -76,7 +76,9 @@ class Patient(Base):
     consent_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     # Rolling baseline (EWMA mean/var + previous reading) for ML features, encrypted with the DEK
     state_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    # Latest scoring summary (no vital values, only band/score/reason codes)
+    # Latest band and AI score: AES-256-GCM under the DEK (security/labels.py). The clear columns below are only
+    # read for rows written before migration 0005 and are always NULL now.
+    last_status_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     last_band: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_reading_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -141,10 +143,12 @@ class Reading(Base):
     seq: Mapped[int] = mapped_column(BigInteger)
     ts: Mapped[int] = mapped_column(BigInteger)  # unix seconds
     nonce: Mapped[bytes] = mapped_column(LargeBinary)
-    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)  # AES-256-GCM(vitals JSON) under patient DEK
-    band: Mapped[str] = mapped_column(String(16))  # normal | warning | critical
-    risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # None: partial reading, no model score
-    reason_codes: Mapped[str] = mapped_column(String(256), default="")
+    # AES-256-GCM under the patient DEK: vitals, NEWS2, band, AI risk and reason codes (security/labels.py)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    # Legacy clear labels: only rows written before migration 0005; NULL for every new reading.
+    band: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_codes: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
 class ReadingRollup(Base):
@@ -157,21 +161,24 @@ class ReadingRollup(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     bucket_ts: Mapped[int] = mapped_column(BigInteger)
-    blob: Mapped[bytes] = mapped_column(LargeBinary)
-    worst_band: Mapped[str] = mapped_column(String(16))
+    blob: Mapped[bytes] = mapped_column(LargeBinary)  # includes the bucket's worst band
+    worst_band: Mapped[str | None] = mapped_column(String(16), nullable=True)  # legacy only (before 0005)
 
 
 class Alert(Base):
     __tablename__ = "alerts"
-    # At most one OPEN alert per patient and reason code, enforced by the database.
+    # At most one OPEN alert per patient and reason, enforced by the database on the blind index (reason_tag),
+    # so the rule holds without the reason being readable (security/labels.py).
     __table_args__ = (
-        Index("uq_alert_open", "patient_id", "reason_code", unique=True,
+        Index("uq_alert_open_tag", "patient_id", "reason_tag", unique=True,
               sqlite_where=text("status = 'open'"), postgresql_where=text("status = 'open'")),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
-    reason_code: Mapped[str] = mapped_column(String(32))
-    severity: Mapped[str] = mapped_column(String(16))
+    reason_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)   # HMAC-SHA-512 blind index
+    details_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # AES-GCM {reason_code, severity}
+    reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)   # legacy only (before 0005)
+    severity: Mapped[str | None] = mapped_column(String(16), nullable=True)      # legacy only (before 0005)
     status: Mapped[str] = mapped_column(String(16), default="open")  # open | acknowledged
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

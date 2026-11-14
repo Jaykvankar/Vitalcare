@@ -19,7 +19,7 @@
    - **Tab 1:** http://localhost:8000 (the app)
    - **Tab 2:** `docs/architecture.html` (works offline)
    - **Tab 3:** `docs/presentation.html` (slides)
-3. Staff accounts show their password and 6-digit code on the sign-in screen in demo mode, so no phone and no printed password list are needed. `seed_credentials.txt` still has them if the screen does not.
+3. Open a **second terminal** in the project folder for staff sign-in codes. `.venv\Scripts\python scripts\totp_code.py dr.mehta` (or `admin`) prints the current 6-digit code; it changes every 30 seconds. Passwords are filled in by **Try a role** and are also in `seed_credentials.txt`.
 4. Set the browser zoom to 110–125 % so the room can read it, and switch off notifications.
 
 | Account | Role | Notes |
@@ -45,8 +45,10 @@ Click **Follow one reading** and step through 2–3 steps.
 checked on arrival, scored, and stored under a key that belongs only to that patient."*
 
 ### 3. Clinician view (Tab 1, 2 min)
-1. Under **Try a role** select **Caretaker**. That fills in `dr.mehta` and the password shown on screen, then select **Continue**, **Use this code**, and **Verify and sign in**.
-   *"Staff need a second factor. In real use this comes from an authenticator app; the demo shows it on screen."*
+1. Under **Try a role** select **Caretaker**. That fills in `dr.mehta` and the password; select **Continue**. In the second
+   terminal run `.venv\Scripts\python scripts\totp_code.py dr.mehta`, type the 6 digits, then **Verify and sign in**.
+   *"Staff need a second factor: a TOTP code from HMAC-SHA-512. In real use it comes from an authenticator app; here this
+   script plays the phone."*
 2. **Patient worklist**: *"Patients are ranked by urgency. Two of them are real ICU patients from the eICU dataset."*
 3. Open **Meera Iyer**:
    - Point at the **vital cards**: temperature says **Not measured**. *"Real devices rarely measure everything, so the
@@ -62,7 +64,7 @@ so the code itself never crosses the network."* Close the window (the code just 
 Optional: open **Device guide** in the sidebar for 10 seconds.
 
 ### 5. Security inspector and live attacks (2 min) — the ISC highlight
-1. Sign out, sign in as **admin** (code on screen again).
+1. Sign out, sign in as **admin** (code from `.venv\Scripts\python scripts\totp_code.py admin`).
 2. Open **Security inspector**. Walk down the numbered steps:
    *"This is the real packet that just arrived: the device's Diffie–Hellman public value, 3072 bits; the AES-GCM nonce and
    authentication tag; the SHA-512 digest; the RSA-PSS signature, verified; the replay check; then it is stored under the
@@ -82,10 +84,11 @@ Sign in as **p.iyer** (password only):
 - **Download my data**: *"The right of access. Erasure works by destroying this patient's key (crypto-shredding)."*
 
 ### 8. Results and honest limits (slides, 1 min)
-- eICU, 2,032 real ICU stays from 184 hospitals: NEWS2 AUROC 0.734; our synthetic-trained model 0.687; a model trained on
-  real data from *other* hospitals 0.760. *"So the next step is retraining on real data."*
-- Not done: real Bluetooth adapters (the path is built and tested with a gateway program), phone app, SMS alerts,
-  clinical certification.
+- The AI is trained on real eICU ICU patients (184 hospitals). On hospitals it never saw: 0.718 vs NEWS2 0.698 (old
+  synthetic model 0.665). On MIMIC, a different hospital system: 0.705 vs NEWS2 0.742. *"Better than before and than
+  NEWS2 on new eICU hospitals, not everywhere, so it only adds warnings on top of the rules and NEWS2."*
+- Bluetooth: standard health devices are decoded by `ble_gateway.py`, tested against the specification, not on real
+  hardware. Not done: phone app, SMS alerts, clinical certification.
 
 ---
 
@@ -93,7 +96,7 @@ Sign in as **p.iyer** (password only):
 | Problem | Fix |
 |---|---|
 | "Invalid username or password" | Select the eye button to see what was typed (or autofilled by the browser) and compare it with the password printed when `demo.py` starts. Passwords are case-sensitive; `--reset` keeps the same ones |
-| Code rejected | Wait for the next code (changes every 30 s) and select **Use this code** again |
+| Code rejected | Run the command again for a fresh code (each code works once and changes every 30 s); check the username in the command |
 | Page empty or "Not signed in" | Refresh; sign in again |
 | No readings arriving | Admin → **Data sources** → **Start all** |
 | Server stopped | Run `.venv\Scripts\python demo.py` again (keeps the data) |
@@ -107,4 +110,5 @@ See `docs/viva_defense.md` for full answers. Short versions:
 - **Why ECDSA for the ledger?** It is the DSA algorithm on an elliptic curve, approved by NIST (FIPS 186-5); classic DSA is withdrawn for new signatures.
 - **What if the database is stolen?** Every reading and personal detail is AES-256-GCM ciphertext; keys are wrapped by a master key kept outside the database.
 - **What if an insider edits the audit log?** The hash chain breaks, and the ECDSA-signed checkpoint no longer matches (tested).
-- **Is the AI reliable?** It is decision support only. On real data NEWS2 still beats our synthetic-trained model; we report that openly.
+- **Is the AI reliable?** Decision support only. Trained on real eICU data, it beats NEWS2 on unseen eICU hospitals (0.718 vs 0.698) but not on MIMIC (0.705 vs 0.742); we report that openly.
+- **What does a stolen database reveal now?** Only ciphertext and row counts: even which patients are critical is encrypted (alert reasons via an HMAC blind index).

@@ -17,8 +17,8 @@ from sqlalchemy import delete, or_, select, update
 
 from .config import get_settings
 from .db import SessionLocal
-from .models import Alert, PairingCode, RateLimit, Reading, ReadingRollup, Session_
-from .security import audit
+from .models import Alert, PairingCode, Patient, RateLimit, Reading, ReadingRollup, Session_
+from .security import aead, audit, crypto, labels
 
 log = logging.getLogger("rpm.jobs")
 ESCALATE_MINUTES = 15
@@ -29,18 +29,28 @@ def escalate_alerts(now: datetime | None = None) -> int:
     cutoff = now - timedelta(minutes=ESCALATE_MINUTES)
     db = SessionLocal()
     try:
-        due = db.execute(select(Alert.id, Alert.patient_id, Alert.reason_code).where(
-            Alert.status == "open", Alert.severity == "critical", Alert.escalated_at.is_(None),
-            Alert.first_seen <= cutoff)).all()
+        # Severity is encrypted (security/labels.py), so candidates are decrypted with each patient's key.
+        candidates = db.execute(select(Alert).where(
+            Alert.status == "open", Alert.escalated_at.is_(None), Alert.first_seen <= cutoff)).scalars().all()
+        deks: dict[int, bytes | None] = {}
         n = 0
-        for alert_id, patient_id, code in due:
-            res = db.execute(update(Alert).where(Alert.id == alert_id, Alert.escalated_at.is_(None))
+        for a in candidates:
+            if a.patient_id not in deks:
+                patient = db.get(Patient, a.patient_id)
+                try:
+                    deks[a.patient_id] = None if patient is None or patient.erased_at else crypto.patient_dek(patient)
+                except aead.DecryptionError:
+                    deks[a.patient_id] = None
+            dek = deks[a.patient_id]
+            if dek is None or labels.alert_details(dek, a)[1] != "critical":
+                continue
+            res = db.execute(update(Alert).where(Alert.id == a.id, Alert.escalated_at.is_(None))
                              .values(escalated_at=now))
             db.commit()
             if res.rowcount == 1:  # only the process that won the update writes the audit row
                 n += 1
-                audit.append("alert_escalated", actor="system", target=f"patient:{patient_id}",
-                             detail=f"alert={alert_id} code={code} unacknowledged>{ESCALATE_MINUTES}min")
+                audit.append("alert_escalated", actor="system", target=f"patient:{a.patient_id}",
+                             detail=f"alert={a.id} unacknowledged>{ESCALATE_MINUTES}min")
         return n
     finally:
         db.close()

@@ -135,6 +135,7 @@ const METRICS = [
   { key: "temp", label: "Temperature", unit: "°C", lines: [["temp", "Temperature", "var(--series-3)"]], refs: [38, 38.5] },
   { key: "risk", label: "AI risk", unit: "", lines: [["risk", "Model probability", "var(--critical)"]], refs: [0.6] },
 ] as const;
+const DEFAULT_MODEL_THRESHOLD = 0.6;
 
 function fmtTime(ts: number, range: string) {
   const d = new Date(ts * 1000);
@@ -183,7 +184,7 @@ function TrendCard({ data, range, setRange }: { data: Readings | null; range: st
                   contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "var(--shadow-lg)", color: "var(--ink)" }}
                   labelStyle={{ color: "var(--muted)" }}
                 />
-                {m.refs.map((r) => (
+                {(m.key === "risk" ? [data?.model_threshold ?? DEFAULT_MODEL_THRESHOLD] : m.refs).map((r) => (
                   <ReferenceLine key={r} y={r} stroke="var(--warning)" strokeDasharray="4 4" strokeOpacity={0.55} />
                 ))}
                 {m.lines.map(([k, name, color]) => (
@@ -200,8 +201,9 @@ function TrendCard({ data, range, setRange }: { data: Readings | null; range: st
 
 /* ---------------------------------------------------------------- AI assessment */
 
-function AssessmentCard({ latest }: { latest: Point | null }) {
+function AssessmentCard({ latest, threshold }: { latest: Point | null; threshold: number }) {
   if (!latest) return null;
+  const thresholdPct = Math.round(threshold * 100);
   const verdict = latest.band === "critical" ? "Urgent review suggested" : latest.band === "warning" ? "Needs attention" : "Within expected range";
   const reasons = latest.reasons.filter((r) => r !== "ML_RISK");
   const risk = latest.risk == null ? null : Math.round(latest.risk * 100);
@@ -226,7 +228,7 @@ function AssessmentCard({ latest }: { latest: Point | null }) {
           <div className="label">Model risk</div>
           <div className="num">{risk == null ? "–" : `${risk}%`}</div>
           {risk == null ? <div className="xs muted">Needs all six vitals</div>
-            : <div className={`meter ${risk >= 60 ? "critical" : risk >= 30 ? "warning" : ""}`}><i style={{ width: `${risk}%` }} /></div>}
+            : <div className={`meter ${risk >= thresholdPct ? "critical" : risk >= thresholdPct / 2 ? "warning" : ""}`}><i style={{ width: `${risk}%` }} /></div>}
         </div>
         <div className="kpi">
           <div className="label">NEWS2{partialNews ? " (partial)" : ""}</div>
@@ -235,7 +237,7 @@ function AssessmentCard({ latest }: { latest: Point | null }) {
         </div>
       </div>
       <div className="foot">
-        <span>Alert threshold: model ≥ 60% or NEWS2 ≥ 5</span>
+        <span>Alert threshold: model ≥ {thresholdPct}% or NEWS2 ≥ 5</span>
         <span>{new Date(latest.ts * 1000).toLocaleTimeString()}</span>
       </div>
     </div>
@@ -392,7 +394,7 @@ export function Monitor({ patientId, patientName, canAck, side }: { patientId: n
       {/* The AI explanation sits beside the chart it explains; alerts and extra cards follow below. */}
       <div className="grid chart-row">
         <TrendCard data={data} range={range} setRange={setRange} />
-        <AssessmentCard latest={data?.latest ?? null} />
+        <AssessmentCard latest={data?.latest ?? null} threshold={data?.model_threshold ?? DEFAULT_MODEL_THRESHOLD} />
       </div>
       <div className="grid main-side">
         <AlertList patientId={patientId} canAck={canAck} />

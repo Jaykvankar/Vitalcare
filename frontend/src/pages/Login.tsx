@@ -59,8 +59,8 @@ export interface DemoAccount { username: string; role: string; full_name: string
 /** One button per role. Prefers the account the demo script uses; falls back to any seeded account with that role. */
 const ROLE_PICKS: { role: string; prefer: string; label: string; icon: keyof typeof Icon; hint: (name: string) => string }[] = [
   { role: "patient", prefer: "p.iyer", label: "Patient", icon: "Heart", hint: (n) => `${n} sees only their own vitals, and can pause sharing.` },
-  { role: "clinician", prefer: "dr.mehta", label: "Caretaker", icon: "Users", hint: (n) => `${n} opens a worklist ranked by urgency. A 6-digit code comes next.` },
-  { role: "admin", prefer: "admin", label: "Admin", icon: "Shield", hint: (n) => `${n} manages people and the ledger, and cannot read vitals. A 6-digit code comes next.` },
+  { role: "clinician", prefer: "dr.mehta", label: "Caretaker", icon: "Users", hint: (n) => `${n} opens a worklist ranked by urgency.` },
+  { role: "admin", prefer: "admin", label: "Admin", icon: "Shield", hint: (n) => `${n} manages people and the ledger, and cannot read vitals.` },
 ];
 
 /** Demo mode only (the server returns no accounts otherwise). Fills in the username and, when the seed file
@@ -88,7 +88,8 @@ function DemoRoles({ accounts, active, onPick }: { accounts: DemoAccount[]; acti
       {chosen && (
         <p className="demo-hint">
           {chosen.hint(chosen.account.full_name)} Username <b>{chosen.account.username}</b>
-          {chosen.account.password ? <> and password <code>{chosen.account.password}</code> are filled in.</> : <> is filled in. Type the password from <code>seed_credentials.txt</code>.</>}
+          {chosen.account.password ? <> and the password are filled in.</> : <> is filled in. Type the password from <code>seed_credentials.txt</code>.</>}
+          {chosen.role !== "patient" && <> A 6-digit code comes next.</>}
         </p>
       )}
     </div>
@@ -241,7 +242,6 @@ export default function Login() {
                     <code className="secret">{step.secret}</code>
                   </div>
                 )}
-                {step.kind === "verify" && !useRecovery && <DemoCode onUse={setCode} />}
                 {useRecovery ? (
                   <label className="field">
                     Recovery code
@@ -284,39 +284,6 @@ export default function Login() {
         <p className="login-note">Staff enter a 6-digit code after the password. Patients sign in with a password only.</p>
         <DemoRoles accounts={demoAccounts} active={username} onPick={pickDemo} />
       </section>
-    </div>
-  );
-}
-
-/** Demo mode only: shows the current code for a seeded demo account so a presenter needs no phone.
- *  The server returns 404 unless it runs in demo mode, the account was created by the demo seed,
- *  and the password step already succeeded, so on a real installation this renders nothing. */
-function DemoCode({ onUse }: { onUse: (code: string) => void }) {
-  const [demo, setDemo] = useState<{ code: string; seconds_left: number } | null>(null);
-  useEffect(() => {
-    let live = true;
-    const load = () =>
-      api<{ code: string; seconds_left: number }>("/api/auth/demo-code")
-        .then((d) => live && setDemo(d))
-        .catch(() => live && setDemo(null));
-    load();
-    const id = window.setInterval(load, 5000);
-    return () => {
-      live = false;
-      window.clearInterval(id);
-    };
-  }, []);
-  if (!demo) return null;
-  return (
-    <div className="notice info demo-code" role="status">
-      <Icon.Key size={18} />
-      <div>
-        <b>Demo mode.</b> Current code for this demo account: <code className="mono">{demo.code}</code>
-        <span className="muted xs"> (changes every 30 s)</span>
-        <div style={{ marginTop: 6 }}>
-          <button type="button" className="btn secondary sm" onClick={() => onUse(demo.code)}>Use this code</button>
-        </div>
-      </div>
     </div>
   );
 }

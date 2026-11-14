@@ -163,11 +163,20 @@ def test_vitals_import(world, client_for):
 def test_critical_alert_escalates(world):
     from app import jobs
     from app.db import SessionLocal
-    from app.models import Alert
+    from app.models import Alert, Patient
+    from app.security import crypto, labels
+    from app.security import server_keys as sk
+    from app.simulator import build_packet
+    from tests.conftest import next_seq
 
+    pkt = build_packet(world["dev_id"], world["dev_key"], sk.load_or_create().dh_public_raw, {"spo2": 84, "hr": 90},
+                       ts=int(time.time()), seq=next_seq(world["dev_id"]))
+    assert TestClient(world["app"], base_url="https://testserver").post("/api/ingest", json=pkt).status_code == 200
     db = SessionLocal()
-    a = db.query(Alert).filter_by(patient_id=world["ids"]["p1"], status="open", severity="critical").first()
-    assert a is not None
+    dek = crypto.patient_dek(db.get(Patient, world["ids"]["p1"]))
+    open_alerts = db.query(Alert).filter_by(patient_id=world["ids"]["p1"], status="open").all()
+    assert open_alerts and all(a.reason_code is None and a.severity is None for a in open_alerts)  # nothing in clear
+    assert ("SPO2_LOW", "critical") in {labels.alert_details(dek, a) for a in open_alerts}
     db.close()
     assert jobs.escalate_alerts(now=datetime.now(UTC) + timedelta(minutes=20)) >= 1
     assert jobs.escalate_alerts(now=datetime.now(UTC) + timedelta(minutes=21)) == 0  # idempotent
@@ -232,40 +241,27 @@ def test_access_log_carries_request_id(world, caplog):
     assert '"request_id":"trace-12345678"' in JsonFormatter().format(line)
 
 
-def test_demo_code_only_in_demo_mode_for_seeded_accounts_after_password(world):
+def test_sign_in_code_is_never_served_even_in_demo_mode(world):
+    """Staff get the 6-digit code from an authenticator app (or scripts/totp_code.py in the demo), never the server."""
     from app.config import get_settings
     from app.db import SessionLocal
     from app.models import User
-    from app.security import auth
 
     c = raw_client(world)
-    assert c.get("/api/auth/demo-code").status_code == 404           # demo mode off by default
     settings = get_settings()
     settings.demo_mode = True
+    db = SessionLocal()
+    db.query(User).filter_by(username="clin2").update({"demo_account": True})
+    db.commit()
     try:
-        assert c.get("/api/auth/demo-code").status_code == 401       # no password yet
-        c.post("/api/auth/login", json={"username": "clin2", "password": world["pw"]})
-        assert c.get("/api/auth/demo-code").status_code == 404       # not a seeded demo account
-
-        db = SessionLocal()
-        db.query(User).filter_by(username="clin2").update({"demo_account": True})
-        db.commit()
-        db.close()
-        r = c.get("/api/auth/demo-code")
-        assert r.status_code == 200
-        totp = pyotp.TOTP(world["totp"]["clin2"], digest=hashlib.sha512)
-        now = time.time()  # accept the neighbouring 30 s step in case the clock ticked between calls
-        assert r.json()["code"] in {totp.at(now), totp.at(now - 30)} and 0 < r.json()["seconds_left"] <= 30
-        reset_totp_guard()
-        assert c.post("/api/auth/mfa", json={"code": r.json()["code"]}).status_code == 200
-        assert c.get("/api/auth/demo-code").status_code == 404       # nothing to show once signed in
+        assert c.post("/api/auth/login", json={"username": "clin2", "password": world["pw"]}).json()["mfa"] == "verify"
+        assert c.get("/api/auth/demo-code").status_code == 404
+        assert world["totp"]["clin2"] not in c.get("/api/auth/demo-accounts").text
     finally:
         settings.demo_mode = False
-        db = SessionLocal()
         db.query(User).filter_by(username="clin2").update({"demo_account": False})
         db.commit()
         db.close()
-        auth.mfa_limiter.reset()
 
 
 def test_demo_accounts_lists_usernames_only_in_demo_mode(world, tmp_path, monkeypatch):

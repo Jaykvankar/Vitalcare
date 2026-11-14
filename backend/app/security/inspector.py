@@ -26,7 +26,7 @@ def _hex(b: bytes, n: int = 24) -> str:
 
 def record(*, packet: dict, epk: bytes, server_pub: bytes, nonce: bytes, ct: bytes, sig: bytes, signed: bytes,
            prev_seq: int, skew_s: int, patient_id: int, key_version: int, store_nonce: bytes, store_ct: bytes,
-           band: str, vitals_count: int, scored: bool) -> None:
+           vitals_count: int, scored: bool) -> None:
     item = {
         "received_at": int(time.time()),
         "device_id": packet["device_id"],
@@ -65,7 +65,10 @@ def record(*, packet: dict, epk: bytes, server_pub: bytes, nonce: bytes, ct: byt
             {"id": "ai", "title": "Risk scored", "family": "AI",
              "algorithm": "Clinical rules + NEWS2"
                           + (" + gradient-boosting model" if scored else " (model skipped: not all six vitals)"),
-             "values": {"Band": band}, "ok": True},
+             # The result (band, score, reasons) is clinical: it is stored encrypted and never shown here.
+             "values": {"Vitals in this reading": f"{vitals_count} of 6",
+                        "Result": "band, AI score and reasons stored inside the AES-256-GCM ciphertext above"},
+             "ok": True},
         ],
     }
     with _lock:

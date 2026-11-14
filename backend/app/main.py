@@ -179,7 +179,9 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             candidate = (FRONTEND_DIST / full_path).resolve()
             if full_path and candidate.is_file() and FRONTEND_DIST.resolve() in candidate.parents:
                 return FileResponse(candidate)
-            return FileResponse(FRONTEND_DIST / "index.html")
+            # The page names the current build's hashed assets: browsers must re-check it, or an old copy keeps
+            # loading the previous build after an update.
+            return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

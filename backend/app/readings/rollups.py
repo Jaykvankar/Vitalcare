@@ -1,8 +1,8 @@
 """Encrypted 5-minute rollups of readings (uses the existing AES-256-GCM envelope scheme).
 
-Each rollup stores count, sums, min and max per vital, encrypted under the patient's DEK with
-AAD = ("rollup", patient_id, bucket_ts). Only the worst band in the bucket is kept in clear,
-the same level of detail already stored per reading.
+Each rollup stores count, sums, min and max per vital and the bucket's worst band, all encrypted under the
+patient's DEK with AAD = ("rollup", patient_id, bucket_ts). Nothing clinical is kept in clear (the worst_band column
+is only read for rollups written before migration 0005).
 """
 from __future__ import annotations
 
@@ -49,6 +49,8 @@ def add(db: Session, *, patient_id: int, dek: bytes, ts: int, values: dict, band
         data = decrypt(dek, row) if row else _empty()
         counts = data.setdefault("count", {k: data["n"] for k in KEYS if k in data["min"]})
         data["n"] += 1
+        old_band = data.get("band") or (row.worst_band if row else None) or "normal"
+        data["band"] = band if BAND_RANK[band] > BAND_RANK[old_band] else old_band
         for k in KEYS:
             if values.get(k) is None:
                 continue
@@ -59,13 +61,11 @@ def add(db: Session, *, patient_id: int, dek: bytes, ts: int, values: dict, band
             data["max"][k] = max(v, data["max"].get(k, v))
         blob = _encrypt(dek, patient_id, bucket, data)
         if row:
-            row.blob = blob
-            if BAND_RANK[band] > BAND_RANK[row.worst_band]:
-                row.worst_band = band
+            row.blob, row.worst_band = blob, None
             return
         try:
             with db.begin_nested():
-                db.add(ReadingRollup(patient_id=patient_id, bucket_ts=bucket, blob=blob, worst_band=band))
+                db.add(ReadingRollup(patient_id=patient_id, bucket_ts=bucket, blob=blob))
             return
         except IntegrityError:
             continue
@@ -82,5 +82,6 @@ def series(db: Session, *, patient_id: int, dek: bytes, since: int) -> list[dict
         # Older summaries have no per-vital counts: every vital was present in every reading then.
         counts = d.get("count") or {k: d["n"] for k in KEYS if k in d["min"]}
         means = {k: round(d["sum"][k] / counts[k], 2) for k in KEYS if counts.get(k)}
-        out.append({"ts": r.bucket_ts + BUCKET_S // 2, "n": d["n"], **means, "band": r.worst_band, "reasons": []})
+        out.append({"ts": r.bucket_ts + BUCKET_S // 2, "n": d["n"], **means, "band": d.get("band") or r.worst_band,
+                    "reasons": []})
     return out

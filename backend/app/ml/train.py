@@ -1,6 +1,9 @@
-"""Train and evaluate the deterioration model.
+"""Train and evaluate the deterioration model on synthetic patients.
 
     python -m app.ml.train          (from backend/)
+
+The shipped model is trained on real ICU data by train_real.py; this script is the synthetic baseline. Running it
+replaces the shipped model with the synthetic one.
 
 Writes app/ml/model.joblib, app/ml/model_hash.py (pinned SHA-512) and docs/model_report.md.
 Patients are split into train/test groups so no patient appears in both (no leakage).
@@ -18,13 +21,14 @@ from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_
 
 from ..security.hashing import sha512_hex
 from .features import FEATURE_NAMES, features_and_update, new_state
-from .infer import ML_THRESHOLD, band_for
+from .infer import band_for
 from .rules import evaluate_rules, news2
 from .synth import DETERIORATION, PatientStream
 
 ML_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = ML_DIR.parents[2]
 STEPS_PER_DAY = 1440  # one reading per minute
+ML_THRESHOLD = 0.6     # threshold for the synthetic model (pinned in model_hash.py when this script ships it)
 
 
 def simulate(n_patients: int, days: float, seed: int, episode_rate: float = 0.002):
@@ -137,6 +141,8 @@ def main() -> None:
     (ML_DIR / "model_hash.py").write_text(
         '"""Pinned SHA-512 of model.joblib, written by train.py. Loading refuses any other file."""\n'
         f'MODEL_SHA512 = "{digest}"\n'
+        f"MODEL_THRESHOLD = {ML_THRESHOLD!r}\n"
+        'MODEL_TRAINED_ON = "synthetic patients"\n'
     )
 
     report = f"""# Risk model report

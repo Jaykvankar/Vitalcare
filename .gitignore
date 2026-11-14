@@ -5,6 +5,7 @@ __pycache__/
 backend/data/
 simulator_keys/
 certs/
+secrets/
 seed_credentials.txt
 frontend/node_modules/
 frontend/dist/

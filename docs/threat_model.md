@@ -13,9 +13,9 @@
 | | Edit or delete audit rows | DB triggers block UPDATE/DELETE; SHA-512 hash chain; ECDSA P-384 signed checkpoints; `UNIQUE(prev_hash)` prevents forks | Rows after the last checkpoint can be truncated undetected until the next checkpoint (every 50 rows and at shutdown) |
 | | Swap the ML model file | Pinned SHA-512 checked before unpickling | Attacker who can change code can change the pin |
 | **R**epudiation | "I never opened that record" | Every decrypt, ack, consent change, pairing, import, erasure is in the signed ledger with actor and time | Reads are de-duplicated to one entry per viewer per minute |
-| **I**nformation disclosure | Stolen DB or backup | All clinical data and PII are AES-256-GCM ciphertext; keys wrapped by a master key kept outside the DB | Master key in an environment variable (production: HSM/KMS) |
+| **I**nformation disclosure | Stolen DB or backup | All clinical data, PII **and clinical labels** (band, AI score, alert reasons via an HMAC-SHA-512 blind index) are AES-256-GCM ciphertext; keys wrapped by a master key kept outside the DB, optionally sealed under a passphrase or supplied by an HSM/KMS | Row counts (which patients exist, how many open alerts) remain visible; the demo keeps the key in `.env` |
 | | Admin snooping | Admins have no decrypt path for vitals/PII; historical vitals import is clinician-only | A server operator with the master key can decrypt |
-| | Logs leak data | JSON logs carry method, path, status, duration and request id only; reason codes, never values | – |
+| | Logs leak data | JSON logs carry method, path, status, duration and request id only; no values, bands or reason codes (also kept out of the audit ledger) | – |
 | | Network observer | TLS 1.3 (AES-256-GCM-SHA384) plus inner DH sealing with per-reading keys (forward secrecy) | Metadata (who talks to the server, when) |
 | **D**enial of service | Flood ingest / login / pairing | Per-key DB-backed rate limits; request size limits; device must sign before any expensive work is kept | No upstream WAF in the demo |
 | **E**levation of privilege | Clinician reads unassigned patient | RBAC + assignment check on every route; 404 for non-assigned (no ID probing) | – |

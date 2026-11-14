@@ -24,7 +24,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..ml import infer
 from ..ml.features import new_state
-from ..ml.rules import validate
+from ..ml.rules import news2_inputs_present, validate
 from ..models import Assignment, Device, ImportBatch, Patient, Reading, User
 from ..readings import rollups
 from ..security import audit, auth, crypto, rbac
@@ -216,11 +216,10 @@ def import_vitals(patient_id: int, body: CsvIn, user: User = Depends(auth.requir
     for seq, (ts, vitals) in enumerate(parsed, start=1):
         result = infer.score(vitals, state)
         state = result.state
-        nonce, ct = crypto.encrypt_reading(dek, {**vitals, "news2": result.news2}, patient_id=p.id,
-                                           device_id=device.id, seq=seq, ts=ts)
-        db.add(Reading(patient_id=p.id, device_id=device.id, seq=seq, ts=ts, nonce=nonce, ciphertext=ct,
-                       band=result.band, risk_score=result.risk,
-                       reason_codes=",".join(c for c, _ in result.reasons)))
+        payload = {**vitals, "news2": result.news2, "news2_inputs": news2_inputs_present(vitals),
+                   "band": result.band, "risk": result.risk, "reasons": [c for c, _ in result.reasons]}
+        nonce, ct = crypto.encrypt_reading(dek, payload, patient_id=p.id, device_id=device.id, seq=seq, ts=ts)
+        db.add(Reading(patient_id=p.id, device_id=device.id, seq=seq, ts=ts, nonce=nonce, ciphertext=ct))
         rollups.add(db, patient_id=p.id, dek=dek, ts=ts, values={**vitals, "risk": result.risk}, band=result.band)
         bands[result.band] += 1
     device.last_seq = len(parsed)

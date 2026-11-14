@@ -72,6 +72,8 @@ export interface Readings {
   count: number;
   latest: Point | null;
   points: Point[];
+  /** Model probability at which ML_RISK is raised; pinned with the model on the server. */
+  model_threshold?: number;
 }
 
 export interface AlertItem {

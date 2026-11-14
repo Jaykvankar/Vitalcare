@@ -79,7 +79,7 @@ def test_migration_0002_adds_columns_to_an_older_database(tmp_path):
     for table in ("devices", "pairing_codes"):
         assert "device_type" in {c["name"] for c in insp.get_columns(table)}
     with eng.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004_partial_readings"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005_encrypted_labels"
     assert "demo_account" in {c["name"] for c in insp.get_columns("users")}
     risk = next(c for c in insp.get_columns("readings") if c["name"] == "risk_score")
     assert risk["nullable"] is True

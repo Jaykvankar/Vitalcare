@@ -2,8 +2,9 @@
 
     python -m app.ml.eval_real          (from backend/, after downloading data/real/)
 
-Writes docs/real_data_report.md. The model itself is still trained on synthetic data; this script
-measures how the rules, NEWS2 and the model behave on real ICU vital signs.
+Writes docs/real_data_report.md: how the rules, NEWS2 and the *synthetic-trained* baseline model behave on real ICU
+vital signs. The shipped model is now trained on eICU by train_real.py; its honest (hospital-held-out and external
+MIMIC) evaluation is in docs/model_report.md. Scoring the shipped model here would test it on its own training data.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 from .features import features_and_update, new_state
-from .infer import band_for, load_model
+from .infer import band_for
 from .realdata import (
     PROJECT_DIR,
     available,
@@ -252,8 +253,8 @@ and the mean synthetic-model probability) from the training hospitals, and score
 {fold_row('Max NEWS2 (no training)', 'news2')}
 {fold_row('Synthetic-trained model (no retraining)', 'synthetic_model')}
 
-The real-data model is an evaluation experiment only; the live app still uses the rules, NEWS2 and the
-synthetic-trained model.
+This stay-level logistic regression is an evaluation experiment. The live app's model is now trained on real eICU
+readings by `train_real.py` (see `model_report.md`).
 
 ### By hospital characteristics (pooled first-24 h scores)
 | Region | Stays | Deaths | NEWS2 AUROC | Model AUROC |
@@ -267,15 +268,17 @@ synthetic-trained model.
 
 
 def main() -> None:
-    model = load_model()
+    from .train_real import synthetic_model
+
+    model, _ = synthetic_model()   # the synthetic baseline, loaded only after its SHA-512 check
     have = available()
     parts = [f"""# Real-data evaluation
 
 Generated {datetime.now(UTC):%Y-%m-%d %H:%M UTC} by `backend/app/ml/eval_real.py`.
 
-**What this does and does not show.** The deterioration model is trained on *synthetic* episodes
-(see `model_report.md`), because no open dataset has bedside-labelled "deterioration started here" markers.
-This report runs the unchanged system on *real* recorded vital signs. It shows alert burden and whether the
+**What this does and does not show.** This report runs the rules, NEWS2 and the *synthetic-trained baseline*
+model on *real* recorded vital signs. The shipped model is trained on real eICU data; its evaluation on hospitals it
+never saw, and on MIMIC, is in `model_report.md`. It shows alert burden and whether the
 scores separate patients with worse outcomes. It is not a clinical validation.
 """]
     if have["mimic"]:
